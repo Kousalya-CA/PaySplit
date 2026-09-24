@@ -1,90 +1,116 @@
 # PaySplit
 
-Split bills with friends. This first version has the account system: **sign up, log in, stay logged in, log out**.
+PaySplit splits customer revenue among employees. It replaces the
+**Employee Contribution & Pay-Split** Excel workbook with a web app.
 
-Tech stack:
 - **Frontend:** React 18 + Vite (`client/`)
 - **Backend:** Node.js HTTP server with no npm dependencies (`server/`)
-- **Database:** SQLite through Node's built-in `node:sqlite` module. The file is `data/paysplit.db` and is created automatically.
+- **Database:** SQLite through Node's built-in `node:sqlite` module, saved in `data/paysplit.db`
+
+## How the calculation works
+
+It works the same way as the workbook:
+
+1. Each **customer** has an onboard month, a payment frequency and a revenue split
+   between **Direct**, **Support** and **Others**, which must add up to 100% (for example 70 / 20 / 10).
+2. A **Yearly** customer gets one period, and its split holds for 12 months. A **Monthly**
+   customer gets 12 monthly periods, and the split can change every month.
+3. In each period you enter the **revenue** and add **contributors** to each category,
+   each with a **weightage %**.
+4. **Pay = Revenue × Category % × Weightage %.** Pay is always calculated and never typed in.
+5. **Summary** shows each employee's pay per month and per year. **All payments** is the
+   full log, and you can download it as a CSV file.
+
+A yearly customer's pay is counted in the month its year starts, just like the workbook's Monthly Summary.
 
 ## Requirements
 
 Node.js **22.13 or newer**. Check with `node --version`.
 
-## Set up
+## First-time setup
 
 ```bash
-git clone <your-repo-url> paysplit
-cd paysplit
 npm run install:client     # installs React + Vite inside client/
+npm run seed               # optional: loads the employees and customers from the Excel workbook
 ```
 
-## Run in development (two terminals)
+## Run it
 
+**Simple (one terminal):**
 ```bash
-# Terminal 1: API server on http://localhost:3000
-npm run dev:server
-
-# Terminal 2: React app on http://localhost:5173
-npm run dev:client
+npm run build
+npm start
 ```
+Open http://localhost:3000. Run `npm run build` again after you change anything in `client/`.
 
-Open **http://localhost:5173**. Vite forwards every `/api` request to the Node server.
-
-## Run in production
-
+**Development (two terminals, updates as soon as you save a file):**
 ```bash
-npm run build                        # builds React into client/dist
-NODE_ENV=production npm start        # serves the app and API on :3000
+npm run dev:server     # terminal 1: API on :3000
+npm run dev:client     # terminal 2: React on :5173
 ```
+Open http://localhost:5173.
 
-In production the session cookie is marked `Secure`, so serve it over HTTPS.
+## Screens
+
+| Screen        | What it does                                                                 |
+|---------------|------------------------------------------------------------------------------|
+| Summary       | Pay by month and by year for every employee, plus revenue that isn't assigned |
+| Customers     | Add customers (Yearly or Monthly) and set the Direct / Support / Others split |
+| Customer page | Pick a period, enter revenue, add contributors and weightages, then save     |
+| Employees     | Add, rename, and mark employees active or inactive                          |
+| All payments  | Every payment row, with filters and a CSV download                         |
+
+Helpful tools on the customer page:
+- **Split equally** gives every contributor in a category the same weightage.
+- **Copy contributors from last month** reuses the previous month's split.
+- A bar under each category shows how much of its pool is assigned. Totals over 100% can't be saved.
 
 ## Project structure
 
 ```
-paysplit/
-├── server/
-│   ├── index.js        HTTP server, auth routes, serves the React build
-│   ├── auth.js         Password hashing (scrypt) and sessions
-│   └── db.js           SQLite connection and tables
-├── client/
-│   ├── index.html
-│   ├── vite.config.js  Dev proxy for /api
-│   └── src/
-│       ├── App.jsx     Chooses login / signup / dashboard
-│       ├── api.js      fetch wrapper
-│       ├── styles.css
-│       └── pages/      Login, Signup, Dashboard, AuthLayout, Field
-└── package.json        Root scripts
+server/
+  index.js          HTTP server, auth check, serves the React build
+  http.js           Router and HTTP helpers
+  db.js             SQLite tables and the "payments" view (the pay formula)
+  auth.js           Password hashing (scrypt) and sessions
+  seed.js           Sample data from the Excel workbook
+  routes/auth.js    Sign up, log in, log out
+  routes/data.js    Employees, customers, periods, payments, summary
+client/src/
+  App.jsx           Login or the app
+  components/       Top bar and navigation, shared bits
+  pages/            Login, Signup, Summary, Customers, CustomerDetail,
+                    PeriodEditor, Employees, Payments
 ```
 
 ## Database tables
 
-```sql
-users    (id, name, email UNIQUE, password_hash, created_at)
-sessions (token_hash, user_id, expires_at)
+```
+users, sessions          login accounts
+employees                id, name, active
+customers                id, name, onboard_month, frequency, direct_pct, support_pct, others_pct
+periods                  id, customer_id, start_month, revenue
+allocations              id, period_id, category, employee_id, weightage
+payments (view)          every allocation with pay = revenue × category % × weightage
 ```
 
-## API
+Percentages are stored as fractions (0.7 = 70%).
 
-| Method | Path               | Body                          | Result                          |
-|--------|--------------------|-------------------------------|---------------------------------|
-| POST   | /api/auth/signup   | `{ name, email, password }`   | Creates the user and logs in    |
-| POST   | /api/auth/login    | `{ email, password }`         | Logs in and sets the cookie     |
-| GET    | /api/auth/me       |                               | Returns the logged-in user      |
-| POST   | /api/auth/logout   |                               | Ends the session                |
+## API (login required except for /api/auth/*)
 
-## Security notes
-
-- Passwords are hashed with **scrypt** and a random salt per user. Plain passwords are never stored.
-- The session token is random (32 bytes) and stored in an **HttpOnly** cookie. The database keeps only its SHA-256 hash.
-- Sessions expire after 7 days.
-- Login is limited to 10 failed attempts per email and IP address every 15 minutes.
-- Emails are stored in lowercase and must be unique.
-
-Node prints an `ExperimentalWarning` for SQLite on start-up. This is expected.
-
-## Next steps
-
-Groups, expenses, and balances: add tables in `server/db.js`, routes in `server/index.js`, and pages in `client/src/pages/`.
+| Method | Path                          | Purpose                                         |
+|--------|-------------------------------|-------------------------------------------------|
+| GET    | /api/employees                | List employees with total pay                   |
+| POST   | /api/employees                | Add an employee `{ name }`                      |
+| PATCH  | /api/employees/:id            | Rename or change active status                  |
+| DELETE | /api/employees/:id            | Delete (only if the employee is in no split)    |
+| GET    | /api/customers                | List customers with revenue and amount paid out |
+| POST   | /api/customers                | Add a customer and create its periods           |
+| GET    | /api/customers/:id            | Customer with periods, contributors and pay     |
+| PATCH  | /api/customers/:id            | Change name or split                            |
+| DELETE | /api/customers/:id            | Delete a customer and its periods               |
+| POST   | /api/customers/:id/periods    | Add the next month or year                      |
+| PUT    | /api/periods/:id              | Save revenue and contributors for a period      |
+| DELETE | /api/periods/:id              | Delete a period                                 |
+| GET    | /api/payments                 | All payment rows                                |
+| GET    | /api/summary                  | Pay by month and by year                        |

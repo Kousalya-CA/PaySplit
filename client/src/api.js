@@ -1,4 +1,4 @@
-// Small wrapper around fetch for the PaySplit API. Cookies carry the session.
+// Small wrapper around fetch for the PaySplit API. The session cookie is sent automatically.
 async function request(path, { method = 'GET', body } = {}) {
   const res = await fetch(`/api${path}`, {
     method,
@@ -12,6 +12,7 @@ async function request(path, { method = 'GET', body } = {}) {
     const err = new Error(data.error || 'Something went wrong. Try again.');
     err.fields = data.errors || {};
     err.status = res.status;
+    if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event('paysplit:logout'));
     throw err;
   }
   return data;
@@ -22,4 +23,25 @@ export const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),
   signup: (name, email, password) => request('/auth/signup', { method: 'POST', body: { name, email, password } }),
   logout: () => request('/auth/logout', { method: 'POST' }),
+
+  employees: {
+    list: () => request('/employees'),
+    create: (name) => request('/employees', { method: 'POST', body: { name } }),
+    update: (id, body) => request(`/employees/${id}`, { method: 'PATCH', body }),
+    remove: (id) => request(`/employees/${id}`, { method: 'DELETE' }),
+  },
+  customers: {
+    list: () => request('/customers'),
+    get: (id) => request(`/customers/${id}`),
+    create: (body) => request('/customers', { method: 'POST', body }),
+    update: (id, body) => request(`/customers/${id}`, { method: 'PATCH', body }),
+    remove: (id) => request(`/customers/${id}`, { method: 'DELETE' }),
+    addPeriod: (id) => request(`/customers/${id}/periods`, { method: 'POST' }),
+  },
+  periods: {
+    save: (id, body) => request(`/periods/${id}`, { method: 'PUT', body }),
+    remove: (id) => request(`/periods/${id}`, { method: 'DELETE' }),
+  },
+  payments: () => request('/payments'),
+  summary: () => request('/summary'),
 };

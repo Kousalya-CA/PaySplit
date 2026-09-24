@@ -14,6 +14,7 @@ db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
 
+  -- Login accounts
   CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     name          TEXT NOT NULL,
@@ -27,4 +28,88 @@ db.exec(`
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at TEXT NOT NULL
   );
+
+  -- Employees who can receive a share of customer revenue
+  CREATE TABLE IF NOT EXISTS employees (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    active     INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- Customers: onboard month, billing frequency and the Direct/Support/Others split.
+  -- Percentages are stored as fractions (0.7 = 70%).
+  CREATE TABLE IF NOT EXISTS customers (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    onboard_month TEXT NOT NULL,                  -- 'YYYY-MM'
+    frequency     TEXT NOT NULL CHECK (frequency IN ('Yearly', 'Monthly')),
+    direct_pct    REAL NOT NULL,
+    support_pct   REAL NOT NULL,
+    others_pct    REAL NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- One row per billing period (a year for Yearly customers, a month for Monthly ones)
+  CREATE TABLE IF NOT EXISTS periods (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    start_month TEXT NOT NULL,                    -- 'YYYY-MM'
+    revenue     REAL NOT NULL DEFAULT 0,
+    UNIQUE (customer_id, start_month)
+  );
+
+  -- Who gets credit in a period, in which category, and with what weightage
+  CREATE TABLE IF NOT EXISTS allocations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_id   INTEGER NOT NULL REFERENCES periods(id) ON DELETE CASCADE,
+    category    TEXT NOT NULL CHECK (category IN ('Direct', 'Support', 'Others')),
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+    weightage   REAL NOT NULL CHECK (weightage >= 0 AND weightage <= 1),
+    UNIQUE (period_id, category, employee_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_periods_customer ON periods(customer_id);
+  CREATE INDEX IF NOT EXISTS idx_alloc_period ON allocations(period_id);
+  CREATE INDEX IF NOT EXISTS idx_alloc_employee ON allocations(employee_id);
+
+  -- Pay is never stored: it is always Revenue x Category % x Weightage %
+  -- (the same formula as the Excel workbook).
+  CREATE VIEW IF NOT EXISTS payments AS
+  SELECT
+    a.id           AS id,
+    c.id           AS customer_id,
+    c.name         AS customer,
+    c.frequency    AS frequency,
+    p.id           AS period_id,
+    p.start_month  AS start_month,
+    a.category     AS category,
+    e.id           AS employee_id,
+    e.name         AS employee,
+    p.revenue      AS revenue,
+    CASE a.category WHEN 'Direct' THEN c.direct_pct
+                    WHEN 'Support' THEN c.support_pct
+                    ELSE c.others_pct END AS category_pct,
+    a.weightage    AS weightage,
+    p.revenue * a.weightage *
+      CASE a.category WHEN 'Direct' THEN c.direct_pct
+                      WHEN 'Support' THEN c.support_pct
+                      ELSE c.others_pct END AS pay
+  FROM allocations a
+  JOIN periods   p ON p.id = a.period_id
+  JOIN customers c ON c.id = p.customer_id
+  JOIN employees e ON e.id = a.employee_id;
 `);
+
+// Run several statements as one all-or-nothing change.
+export function transaction(fn) {
+  db.exec('BEGIN');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}

@@ -2,14 +2,17 @@
   "name": "paysplit",
   "version": "1.0.0",
   "private": true,
-  "description": "PaySplit: split bills with friends. React + Node.js + SQLite.",
+  "description": "PaySplit: split customer revenue among employees. React + Node.js + SQLite.",
   "type": "module",
-  "engines": { "node": ">=22.13.0" },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "install:client": "npm install --prefix client",
     "dev:server": "node --watch server/index.js",
     "dev:client": "npm run dev --prefix client",
     "build": "npm run build --prefix client",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "seed": "node server/seed.js"
   }
 }
