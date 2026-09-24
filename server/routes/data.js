@@ -71,6 +71,9 @@ const q = {
   months: db.prepare('SELECT DISTINCT start_month FROM periods ORDER BY start_month'),
   payByEmployeeMonth: db.prepare(`
     SELECT employee_id, start_month, SUM(pay) AS pay FROM payments GROUP BY employee_id, start_month`),
+  payByEmployeeCustomerMonth: db.prepare(`
+    SELECT employee_id, customer_id, customer, start_month, SUM(pay) AS pay
+    FROM payments GROUP BY employee_id, customer_id, start_month ORDER BY customer`),
   totals: db.prepare(`
     SELECT (SELECT COALESCE(SUM(revenue), 0) FROM periods) AS revenue,
            (SELECT COALESCE(SUM(pay), 0) FROM payments) AS paid`),
@@ -270,6 +273,7 @@ export function registerDataRoutes(router) {
     const months = q.months.all().map((r) => r.start_month);
     const years = [...new Set(months.map((m) => m.slice(0, 4)))];
     const pay = q.payByEmployeeMonth.all();
+    const customerPay = q.payByEmployeeCustomerMonth.all();
     const employees = q.employees.all()
       .map((e) => {
         const byMonth = {};
@@ -279,7 +283,22 @@ export function registerDataRoutes(router) {
           const y = r.start_month.slice(0, 4);
           byYear[y] = (byYear[y] || 0) + r.pay;
         }
-        return { id: e.id, name: e.name, active: Boolean(e.active), byMonth, byYear, total: e.total_pay };
+        // Drill-down: the same pay split up by customer.
+        const customers = new Map();
+        for (const r of customerPay.filter((p) => p.employee_id === e.id)) {
+          if (!customers.has(r.customer_id)) {
+            customers.set(r.customer_id, { id: r.customer_id, name: r.customer, byMonth: {}, byYear: {}, total: 0 });
+          }
+          const c = customers.get(r.customer_id);
+          const y = r.start_month.slice(0, 4);
+          c.byMonth[r.start_month] = (c.byMonth[r.start_month] || 0) + r.pay;
+          c.byYear[y] = (c.byYear[y] || 0) + r.pay;
+          c.total += r.pay;
+        }
+        return {
+          id: e.id, name: e.name, active: Boolean(e.active), byMonth, byYear, total: e.total_pay,
+          customers: [...customers.values()],
+        };
       })
       .filter((e) => e.active || e.total !== 0);
     const monthTotals = Object.fromEntries(months.map((m) => [m, employees.reduce((s, e) => s + (e.byMonth[m] || 0), 0)]));
