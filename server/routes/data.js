@@ -23,13 +23,13 @@ function toNumber(value, label) {
 // ---------- queries ----------------------------------------------------------
 const q = {
   employees: db.prepare(`
-    SELECT e.id, e.name, e.active,
+    SELECT e.id, e.name, e.active, e.type,
       (SELECT COUNT(*) FROM allocations a WHERE a.employee_id = e.id) AS split_count,
       (SELECT COALESCE(SUM(pay), 0) FROM payments p WHERE p.employee_id = e.id) AS total_pay
     FROM employees e ORDER BY e.active DESC, e.id`),
-  employee: db.prepare('SELECT id, name, active FROM employees WHERE id = ?'),
-  insertEmployee: db.prepare('INSERT INTO employees (name) VALUES (?)'),
-  updateEmployee: db.prepare('UPDATE employees SET name = ?, active = ? WHERE id = ?'),
+  employee: db.prepare('SELECT id, name, active, type FROM employees WHERE id = ?'),
+  insertEmployee: db.prepare('INSERT INTO employees (name, type) VALUES (?, ?)'),
+  updateEmployee: db.prepare('UPDATE employees SET name = ?, active = ?, type = ? WHERE id = ?'),
   deleteEmployee: db.prepare('DELETE FROM employees WHERE id = ?'),
   employeeSplits: db.prepare('SELECT COUNT(*) AS n FROM allocations WHERE employee_id = ?'),
 
@@ -123,10 +123,14 @@ export function registerDataRoutes(router) {
   router.post('/api/employees', ({ body, setStatus }) => {
     const name = String(body.name ?? '').trim();
     if (!name) throw new HttpError(400, 'Enter the employee name.');
+    const type = body.type || 'Product';
+    if (!['Product', 'Support', 'Admin'].includes(type)) {
+      throw new HttpError(400, 'Type must be Product, Support, or Admin.');
+    }
     try {
-      const { lastInsertRowid } = q.insertEmployee.run(name);
+      const { lastInsertRowid } = q.insertEmployee.run(name, type);
       setStatus(201);
-      return { id: Number(lastInsertRowid), name, active: true, split_count: 0, total_pay: 0 };
+      return { id: Number(lastInsertRowid), name, active: true, type, split_count: 0, total_pay: 0 };
     } catch (err) {
       if (isUniqueError(err)) throw new HttpError(409, `${name} is already in the employee list.`);
       throw err;
@@ -140,13 +144,17 @@ export function registerDataRoutes(router) {
     const name = body.name === undefined ? current.name : String(body.name).trim();
     if (!name) throw new HttpError(400, 'Enter the employee name.');
     const active = body.active === undefined ? current.active : (body.active ? 1 : 0);
+    const type = body.type === undefined ? current.type : body.type;
+    if (!['Product', 'Support', 'Admin'].includes(type)) {
+      throw new HttpError(400, 'Type must be Product, Support, or Admin.');
+    }
     try {
-      q.updateEmployee.run(name, active, params.id);
+      q.updateEmployee.run(name, active, type, params.id);
     } catch (err) {
       if (isUniqueError(err)) throw new HttpError(409, `${name} is already in the employee list.`);
       throw err;
     }
-    return { id: params.id, name, active: Boolean(active) };
+    return { id: params.id, name, active: Boolean(active), type };
   });
 
   router.delete('/api/employees/:id', ({ params }) => {

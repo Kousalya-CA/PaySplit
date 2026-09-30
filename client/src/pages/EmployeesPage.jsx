@@ -5,8 +5,9 @@ import { Loading, ErrorNote, Money } from '../components/common.jsx';
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState(null);
   const [name, setName] = useState('');
+  const [type, setType] = useState('Product');
   const [error, setError] = useState('');
-  const [editing, setEditing] = useState(null); // { id, name }
+  const [editing, setEditing] = useState(null); // { id, name, type }
 
   const load = () => api.employees.list().then(setEmployees).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
@@ -15,8 +16,9 @@ export default function EmployeesPage() {
     e.preventDefault();
     setError('');
     try {
-      await api.employees.create(name);
+      await api.employees.create(name, type);
       setName('');
+      setType('Product');
       load();
     } catch (err) { setError(err.message); }
   };
@@ -25,7 +27,7 @@ export default function EmployeesPage() {
     e.preventDefault();
     setError('');
     try {
-      await api.employees.update(editing.id, { name: editing.name });
+      await api.employees.update(editing.id, { name: editing.name, type: editing.type });
       setEditing(null);
       load();
     } catch (err) { setError(err.message); }
@@ -53,6 +55,14 @@ export default function EmployeesPage() {
           <span>New employee</span>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" required />
         </label>
+        <label>
+          <span>Type</span>
+          <select value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="Product">Product</option>
+            <option value="Support">Support</option>
+            <option value="Admin">Admin</option>
+          </select>
+        </label>
         <button className="primary" type="submit">Add employee</button>
       </form>
       <ErrorNote>{error}</ErrorNote>
@@ -65,6 +75,7 @@ export default function EmployeesPage() {
             <thead>
               <tr>
                 <th scope="col">Name</th>
+                <th scope="col">Type</th>
                 <th scope="col">Status</th>
                 <th scope="col" className="num">In splits</th>
                 <th scope="col" className="num">Total earned</th>
@@ -84,13 +95,22 @@ export default function EmployeesPage() {
                       </form>
                     ) : emp.name}
                   </th>
+                  <td>
+                    {editing?.id === emp.id ? (
+                      <select value={editing.type} onChange={(e) => setEditing({ ...editing, type: e.target.value })}>
+                        <option value="Product">Product</option>
+                        <option value="Support">Support</option>
+                        <option value="Admin">Admin</option>
+                      </select>
+                    ) : emp.type}
+                  </td>
                   <td>{emp.active ? 'Active' : 'Inactive'}</td>
                   <td className="num">{emp.split_count}</td>
                   <td><Money value={emp.total_pay} /></td>
                   <td className="row-actions">
                     {editing?.id !== emp.id && (
                       <>
-                        <button className="link" onClick={() => setEditing({ id: emp.id, name: emp.name })}>Rename</button>
+                        <button className="link" onClick={() => setEditing({ id: emp.id, name: emp.name, type: emp.type })}>Edit</button>
                         <button className="link" onClick={() => toggleActive(emp)}>{emp.active ? 'Mark inactive' : 'Mark active'}</button>
                         {emp.split_count === 0 && <button className="link danger" onClick={() => remove(emp)}>Delete</button>}
                       </>

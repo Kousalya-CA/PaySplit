@@ -35,8 +35,8 @@ if (n > 0) {
 }
 
 transaction(() => {
-  const addEmp = db.prepare('INSERT OR IGNORE INTO employees (name) VALUES (?)');
-  EMPLOYEES.forEach((name) => addEmp.run(name));
+  const addEmp = db.prepare('INSERT OR IGNORE INTO employees (name, type) VALUES (?, ?)');
+  EMPLOYEES.forEach((name) => addEmp.run(name, 'Product'));
   const empId = (name) => db.prepare('SELECT id FROM employees WHERE name = ?').get(name).id;
 
   for (const c of CUSTOMERS) {

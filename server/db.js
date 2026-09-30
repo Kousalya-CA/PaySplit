@@ -116,6 +116,13 @@ addUserColumn('invite_token_hash', 'TEXT');
 addUserColumn('invite_expires_at', 'TEXT');
 addUserColumn('last_login_at', 'TEXT');
 
+// Employees added before types existed get the new type column. Default to 'Product' for existing employees.
+const employeeColumns = new Set(db.prepare('PRAGMA table_info(employees)').all().map((c) => c.name));
+const addEmployeeColumn = (name, definition) => {
+  if (!employeeColumns.has(name)) db.exec(`ALTER TABLE employees ADD COLUMN ${name} ${definition}`);
+};
+addEmployeeColumn('type', "TEXT NOT NULL DEFAULT 'Product' CHECK (type IN ('Product', 'Support', 'Admin'))");
+
 // The owner is the permanent admin: OWNER_EMAIL if set, otherwise the first account created.
 if (!db.prepare('SELECT 1 FROM users WHERE is_owner = 1').get()) {
   const owner = (process.env.OWNER_EMAIL && db.prepare('SELECT id FROM users WHERE email = ?').get(process.env.OWNER_EMAIL))
