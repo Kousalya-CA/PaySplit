@@ -70,10 +70,10 @@ export function registerUserRoutes(router) {
     return { id: target.id, name, role };
   }, { admin: true });
 
-  router.delete('/api/users/:id', ({ params, user: me }) => {
+  // Anyone except the owner can be deleted, including an admin deleting their own account.
+  router.delete('/api/users/:id', ({ params }) => {
     const target = requireUser(params.id);
-    if (target.is_owner) throw new HttpError(403, `${target.name} is the owner and can't be removed.`);
-    if (target.id === me.id) throw new HttpError(403, "You can't remove yourself.");
+    if (target.is_owner) throw new HttpError(403, `${target.name} is the owner and can't be deleted.`);
     q.remove.run(target.id); // their sessions are removed with them
   }, { admin: true });
 

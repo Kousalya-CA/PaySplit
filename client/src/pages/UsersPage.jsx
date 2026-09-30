@@ -13,7 +13,10 @@ const when = (s) => (s
   ? new Date(`${s.replace(' ', 'T')}Z`).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
   : 'Never');
 
-const setupUrl = (token) => `${window.location.origin}${window.location.pathname}#/set-password/${token}`;
+// The owner is shown as its own role; only Admin and Employee can be given to people.
+export const roleLabel = (u) => (u.isOwner ? 'Owner' : u.role === 'admin' ? 'Admin' : 'Employee');
+
+const setupUrl =(token) => `${window.location.origin}${window.location.pathname}#/set-password/${token}`;
 
 // Admins only: add people with a role, send setup links, change roles, remove access.
 export default function UsersPage({ me }) {
@@ -64,9 +67,15 @@ export default function UsersPage({ me }) {
     run(() => api.users.signOut(u.id));
   };
 
-  const remove = (u) => {
-    if (!window.confirm(`Remove ${u.name}? They won't be able to log in any more.`)) return;
-    run(() => api.users.remove(u.id));
+  const remove = (u, isMe) => {
+    const question = isMe
+      ? "Delete your own account? You'll be logged out and won't be able to log in again."
+      : `Delete ${u.name}? They won't be able to log in any more.`;
+    if (!window.confirm(question)) return;
+    run(async () => {
+      await api.users.remove(u.id);
+      if (isMe) window.dispatchEvent(new Event('paysplit:logout'));
+    });
   };
 
   return (
@@ -131,12 +140,11 @@ export default function UsersPage({ me }) {
                   <tr key={u.id}>
                     <th scope="row">
                       {u.name}
-                      {u.isOwner && <span className="tag">Owner</span>}
                       {isMe && <span className="tag">You</span>}
                     </th>
                     <td>{u.email}</td>
                     <td>
-                      {locked ? (u.role === 'admin' ? 'Admin' : 'Employee') : (
+                      {locked ? roleLabel(u) : (
                         <select aria-label={`Role for ${u.name}`} className="compact" value={u.role}
                           onChange={(e) => changeRole(u, e.target.value)}>
                           <option value="employee">Employee</option>
@@ -156,7 +164,7 @@ export default function UsersPage({ me }) {
                         </button>
                       )}
                       {!isMe && u.loggedIn && <button className="link" onClick={() => signOut(u)}>Sign out</button>}
-                      {!locked && <button className="link danger" onClick={() => remove(u)}>Remove</button>}
+                      {!u.isOwner && <button className="link danger" onClick={() => remove(u, isMe)}>Delete</button>}
                     </td>
                   </tr>
                 );
@@ -166,7 +174,7 @@ export default function UsersPage({ me }) {
         </div>
       )}
       <p className="muted small">
-        The owner always stays an admin and can't be removed. Admins can add and manage users;
+        The owner has full access and can't be deleted or changed. Admins can add and manage users;
         employees can't see this page.
       </p>
     </section>

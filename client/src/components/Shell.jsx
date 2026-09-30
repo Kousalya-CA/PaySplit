@@ -4,7 +4,7 @@ import CustomersPage from '../pages/CustomersPage.jsx';
 import CustomerDetail from '../pages/CustomerDetail.jsx';
 import EmployeesPage from '../pages/EmployeesPage.jsx';
 import PaymentsPage from '../pages/PaymentsPage.jsx';
-import UsersPage from '../pages/UsersPage.jsx';
+import UsersPage, { roleLabel } from '../pages/UsersPage.jsx';
 
 const NAV = [
   ['summary', 'Summary'],
@@ -36,7 +36,7 @@ export default function Shell({ user, onLogout }) {
           ))}
         </nav>
         <div className="topbar-user">
-          <span className="avatar" title={`${user.name} (${user.email}), ${user.role}`}>{user.name[0].toUpperCase()}</span>
+          <span className="avatar" title={`${user.name} (${user.email}), ${roleLabel(user)}`}>{user.name[0].toUpperCase()}</span>
           <button className="ghost" onClick={onLogout}>Log out</button>
         </div>
       </header>

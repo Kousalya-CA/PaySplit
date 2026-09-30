@@ -63,8 +63,8 @@ Open http://localhost:5173.
 
 ## Users and logins
 
-There is no public sign-up. The **owner** (the first account, or `OWNER_EMAIL` if set) is a
-permanent admin who can't be removed or demoted.
+There is no public sign-up. The **owner** (the first account, or `OWNER_EMAIL` if set) has full
+access and can't be deleted or changed. Owner is not a role you can give to others.
 
 1. An admin adds a person on the **Users** page with a name, email and role.
 2. PaySplit shows a one-time **setup link** (valid 7 days). The admin sends it to them.
@@ -73,6 +73,7 @@ permanent admin who can't be removed or demoted.
 **Reset password** on the Users page makes a new link; the old password keeps working until it is used.
 If the database has no users at all, the login page shows a one-time form to create the owner.
 
+- **Owner:** everything, including the Users page. Only one, set automatically.
 - **Admin:** everything, including the Users page.
 - **Employee:** everything except the Users page.
 
@@ -135,6 +136,6 @@ Percentages are stored as fractions (0.7 = 70%).
 | GET    | /api/users                    | Admin: list users with status and last login    |
 | POST   | /api/users                    | Admin: add `{ name, email, role }`, returns a setup link |
 | PATCH  | /api/users/:id                | Admin: rename or change role                    |
-| DELETE | /api/users/:id                | Admin: remove (not the owner or yourself)       |
+| DELETE | /api/users/:id                | Admin: delete anyone except the owner           |
 | POST   | /api/users/:id/invite         | Admin: new setup or password reset link         |
 | POST   | /api/users/:id/logout         | Admin: sign a user out everywhere               |
