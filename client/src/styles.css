@@ -226,6 +226,15 @@ tr.inactive th, tr.inactive td { color: var(--muted); }
 .grid tr.drill-row a { color: var(--muted); font-weight: 600; }
 .grid tr.drill-row a:hover { color: var(--ink); }
 .row-actions { display: flex; gap: 1rem; }
+
+/* Users page */
+.user-form .field-error { display: block; }
+.page select.compact { width: auto; padding: .3rem .5rem; }
+.tag-live { background: var(--green-soft); color: var(--green); }
+.setup-link { border-color: var(--green); }
+.setup-link p { margin: 0; }
+.copy-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.copy-row input { flex: 1; min-width: 14rem; font-family: ui-monospace, monospace; font-size: .85rem; }
 .rename { display: flex; gap: .4rem; align-items: center; }
 .rename input { min-width: 10rem; }
 

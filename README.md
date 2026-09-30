@@ -59,6 +59,22 @@ Open http://localhost:5173.
 | Customer page | Pick a period, enter revenue, add contributors and weightages, then save     |
 | Employees     | Add, rename, and mark employees active or inactive                          |
 | All payments  | Every payment row, with filters and a CSV download                         |
+| Users         | Admins only: add people as Admin or Employee, send setup links, remove access |
+
+## Users and logins
+
+There is no public sign-up. The **owner** (the first account, or `OWNER_EMAIL` if set) is a
+permanent admin who can't be removed or demoted.
+
+1. An admin adds a person on the **Users** page with a name, email and role.
+2. PaySplit shows a one-time **setup link** (valid 7 days). The admin sends it to them.
+3. They open the link, choose a password, and are logged in. After that they log in normally.
+
+**Reset password** on the Users page makes a new link; the old password keeps working until it is used.
+If the database has no users at all, the login page shows a one-time form to create the owner.
+
+- **Admin:** everything, including the Users page.
+- **Employee:** everything except the Users page.
 
 Helpful tools on the customer page:
 - **Split equally** gives every contributor in a category the same weightage.
@@ -74,19 +90,21 @@ server/
   db.js             SQLite tables and the "payments" view (the pay formula)
   auth.js           Password hashing (scrypt) and sessions
   seed.js           Sample data from the Excel workbook
-  routes/auth.js    Sign up, log in, log out
+  routes/auth.js    Log in, log out, first-time setup, setup links
+  routes/users.js   Users page API (admins only)
   routes/data.js    Employees, customers, periods, payments, summary
 client/src/
   App.jsx           Login or the app
   components/       Top bar and navigation, shared bits
-  pages/            Login, Signup, Summary, Customers, CustomerDetail,
-                    PeriodEditor, Employees, Payments
+  pages/            Login, Setup, SetPassword, Users, Summary, Customers,
+                    CustomerDetail, PeriodEditor, Employees, Payments
 ```
 
 ## Database tables
 
 ```
-users, sessions          login accounts
+users                    id, name, email, role (admin/employee), is_owner, last_login_at, setup link
+sessions                 login sessions
 employees                id, name, active
 customers                id, name, onboard_month, frequency, direct_pct, support_pct, others_pct
 periods                  id, customer_id, start_month, revenue
@@ -114,3 +132,9 @@ Percentages are stored as fractions (0.7 = 70%).
 | DELETE | /api/periods/:id              | Delete a period                                 |
 | GET    | /api/payments                 | All payment rows                                |
 | GET    | /api/summary                  | Pay by month and by year                        |
+| GET    | /api/users                    | Admin: list users with status and last login    |
+| POST   | /api/users                    | Admin: add `{ name, email, role }`, returns a setup link |
+| PATCH  | /api/users/:id                | Admin: rename or change role                    |
+| DELETE | /api/users/:id                | Admin: remove (not the owner or yourself)       |
+| POST   | /api/users/:id/invite         | Admin: new setup or password reset link         |
+| POST   | /api/users/:id/logout         | Admin: sign a user out everywhere               |

@@ -104,6 +104,25 @@ db.exec(`
   JOIN employees e ON e.id = a.employee_id;
 `);
 
+// Users added before roles existed get the new columns. Invited users have an empty
+// password_hash until they open their setup link and choose a password.
+const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map((c) => c.name));
+const addUserColumn = (name, definition) => {
+  if (!userColumns.has(name)) db.exec(`ALTER TABLE users ADD COLUMN ${name} ${definition}`);
+};
+addUserColumn('role', "TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('admin', 'employee'))");
+addUserColumn('is_owner', 'INTEGER NOT NULL DEFAULT 0');
+addUserColumn('invite_token_hash', 'TEXT');
+addUserColumn('invite_expires_at', 'TEXT');
+addUserColumn('last_login_at', 'TEXT');
+
+// The owner is the permanent admin: OWNER_EMAIL if set, otherwise the first account created.
+if (!db.prepare('SELECT 1 FROM users WHERE is_owner = 1').get()) {
+  const owner = (process.env.OWNER_EMAIL && db.prepare('SELECT id FROM users WHERE email = ?').get(process.env.OWNER_EMAIL))
+    || db.prepare('SELECT id FROM users ORDER BY id LIMIT 1').get();
+  if (owner) db.prepare("UPDATE users SET is_owner = 1, role = 'admin' WHERE id = ?").run(owner.id);
+}
+
 // Run several statements as one all-or-nothing change.
 export function transaction(fn) {
   db.exec('BEGIN');

@@ -29,10 +29,10 @@ export const getCookie = (req, name) =>
 
 export function createRouter() {
   const routes = [];
-  const add = (method) => (pattern, handler, { auth = true } = {}) => {
+  const add = (method) => (pattern, handler, { auth = true, admin = false } = {}) => {
     const keys = [];
     const source = pattern.replace(/:(\w+)/g, (_, key) => { keys.push(key); return '(\\d+)'; });
-    routes.push({ method, re: new RegExp(`^${source}$`), keys, handler, auth });
+    routes.push({ method, re: new RegExp(`^${source}$`), keys, handler, auth, admin });
   };
   return {
     get: add('GET'), post: add('POST'), put: add('PUT'), patch: add('PATCH'), delete: add('DELETE'),

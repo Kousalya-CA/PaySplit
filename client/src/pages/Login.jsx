@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import AuthLayout from './AuthLayout.jsx';
 import Field from './Field.jsx';
 
-export default function Login({ onSuccess, onSwitch }) {
+export default function Login({ onSuccess }) {
   const [form, setForm] = useState({ email: '', password: '' });
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');
@@ -32,7 +32,7 @@ export default function Login({ onSuccess, onSwitch }) {
   };
 
   return (
-    <AuthLayout title="Log in" subtitle="Welcome back. Your groups and balances are waiting.">
+    <AuthLayout title="Log in" subtitle="Welcome back. Log in to see customer revenue and pay splits.">
       <form onSubmit={submit} noValidate>
         {formError && <div className="form-error" role="alert">{formError}</div>}
         <Field label="Email" name="email" type="email" autoComplete="email"
@@ -44,7 +44,7 @@ export default function Login({ onSuccess, onSwitch }) {
         </button>
       </form>
       <p className="switch">
-        New to PaySplit? <button type="button" className="link" onClick={onSwitch}>Create an account</button>
+        No account? Ask your PaySplit admin to add you. They'll send you a link to set your password.
       </p>
     </AuthLayout>
   );

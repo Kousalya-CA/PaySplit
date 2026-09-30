@@ -7,6 +7,7 @@ import { createRouter, sendJson, readBody, getCookie, HttpError } from './http.j
 import { userFromToken } from './auth.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerDataRoutes } from './routes/data.js';
+import { registerUserRoutes } from './routes/users.js';
 
 const PORT = process.env.PORT || 3000;
 const distDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'dist');
@@ -14,6 +15,7 @@ const distDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'd
 const router = createRouter();
 registerAuthRoutes(router);
 registerDataRoutes(router);
+registerUserRoutes(router);
 
 async function handleApi(req, res, pathname) {
   const found = router.match(req.method, pathname);
@@ -21,6 +23,7 @@ async function handleApi(req, res, pathname) {
 
   const user = userFromToken(getCookie(req, 'sid'));
   if (found.route.auth && !user) throw new HttpError(401, 'Please log in again.');
+  if (found.route.admin && user?.role !== 'admin') throw new HttpError(403, 'Only admins can do this.');
 
   let status = 200;
   const headers = {};

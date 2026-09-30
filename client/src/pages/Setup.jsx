@@ -3,7 +3,8 @@ import { api } from '../api.js';
 import AuthLayout from './AuthLayout.jsx';
 import Field from './Field.jsx';
 
-export default function Signup({ onSuccess, onSwitch }) {
+// Shown only when the database has no accounts: creates the owner, who is the permanent admin.
+export default function Setup({ onSuccess }) {
   const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');
@@ -23,7 +24,7 @@ export default function Signup({ onSuccess, onSwitch }) {
 
     setLoading(true);
     try {
-      const { user } = await api.signup(form.name, form.email, form.password);
+      const { user } = await api.setup(form.name, form.email, form.password);
       onSuccess(user);
     } catch (err) {
       setErrors(err.fields || {});
@@ -34,7 +35,7 @@ export default function Signup({ onSuccess, onSwitch }) {
   };
 
   return (
-    <AuthLayout title="Create your account" subtitle="Start a group, add a bill, and PaySplit does the maths.">
+    <AuthLayout title="Set up PaySplit" subtitle="Create the admin account. After this, only admins can add people.">
       <form onSubmit={submit} noValidate>
         {formError && <div className="form-error" role="alert">{formError}</div>}
         <Field label="Name" name="name" autoComplete="name"
@@ -44,12 +45,9 @@ export default function Signup({ onSuccess, onSwitch }) {
         <Field label="Password" name="password" type="password" autoComplete="new-password"
           value={form.password} onChange={change} error={errors.password} hint="At least 8 characters." />
         <button className="primary" type="submit" disabled={loading}>
-          {loading ? 'Creating account…' : 'Create account'}
+          {loading ? 'Setting up…' : 'Create admin account'}
         </button>
       </form>
-      <p className="switch">
-        Already have an account? <button type="button" className="link" onClick={onSwitch}>Log in</button>
-      </p>
     </AuthLayout>
   );
 }

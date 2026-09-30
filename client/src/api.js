@@ -21,8 +21,20 @@ async function request(path, { method = 'GET', body } = {}) {
 export const api = {
   me: () => request('/auth/me'),
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),
-  signup: (name, email, password) => request('/auth/signup', { method: 'POST', body: { name, email, password } }),
+  status: () => request('/auth/status'),
+  setup: (name, email, password) => request('/auth/setup', { method: 'POST', body: { name, email, password } }),
+  invite: (token) => request('/auth/invite', { method: 'POST', body: { token } }),
+  setPassword: (token, password) => request('/auth/set-password', { method: 'POST', body: { token, password } }),
   logout: () => request('/auth/logout', { method: 'POST' }),
+
+  users: {
+    list: () => request('/users'),
+    create: (body) => request('/users', { method: 'POST', body }),
+    update: (id, body) => request(`/users/${id}`, { method: 'PATCH', body }),
+    remove: (id) => request(`/users/${id}`, { method: 'DELETE' }),
+    newLink: (id) => request(`/users/${id}/invite`, { method: 'POST' }),
+    signOut: (id) => request(`/users/${id}/logout`, { method: 'POST' }),
+  },
 
   employees: {
     list: () => request('/employees'),
