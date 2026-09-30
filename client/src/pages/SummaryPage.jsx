@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { money, monthLabel } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
@@ -59,15 +59,7 @@ export default function SummaryPage() {
               <th scope="col" className="num">Total</th>
             </tr>
           </thead>
-          <tbody>
-            {employees.map((e) => (
-              <tr key={e.id}>
-                <th scope="row">{e.name}{!e.active && <span className="tag">Inactive</span>}</th>
-                {months.map((m) => <td key={m}><Money value={e.byMonth[m]} /></td>)}
-                <td className="strong"><Money value={e.total} /></td>
-              </tr>
-            ))}
-          </tbody>
+          <EmployeeRows employees={employees} columns={months} by="byMonth" />
           <tfoot>
             <tr>
               <th scope="row">Total</th>
@@ -88,15 +80,7 @@ export default function SummaryPage() {
               <th scope="col" className="num">Total</th>
             </tr>
           </thead>
-          <tbody>
-            {employees.map((e) => (
-              <tr key={e.id}>
-                <th scope="row">{e.name}</th>
-                {years.map((y) => <td key={y}><Money value={e.byYear[y]} /></td>)}
-                <td className="strong"><Money value={e.total} /></td>
-              </tr>
-            ))}
-          </tbody>
+          <EmployeeRows employees={employees} columns={years} by="byYear" />
           <tfoot>
             <tr>
               <th scope="row">Total</th>
@@ -108,5 +92,53 @@ export default function SummaryPage() {
       </div>
       <p className="muted small">A yearly customer's pay is counted in the month the year starts, the same as the Excel workbook.</p>
     </section>
+  );
+}
+
+// One row per employee; clicking the name drills down into their pay by customer.
+function EmployeeRows({ employees, columns, by }) {
+  const [open, setOpen] = useState(() => new Set());
+  const toggle = (id) => setOpen((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  return (
+    <tbody>
+      {employees.map((e) => {
+        const expanded = open.has(e.id);
+        const canExpand = e.customers.length > 0;
+        return (
+          <Fragment key={e.id}>
+            <tr className={expanded ? 'drill-open' : undefined}>
+              <th scope="row">
+                {canExpand ? (
+                  <button
+                    type="button"
+                    className="drill"
+                    aria-expanded={expanded}
+                    onClick={() => toggle(e.id)}
+                    title={expanded ? 'Hide customer split' : 'Show customer split'}
+                  >
+                    <span className="drill-caret" aria-hidden="true">▸</span>{e.name}
+                  </button>
+                ) : e.name}
+                {!e.active && <span className="tag">Inactive</span>}
+              </th>
+              {columns.map((c) => <td key={c}><Money value={e[by][c]} /></td>)}
+              <td className="strong"><Money value={e.total} /></td>
+            </tr>
+            {expanded && e.customers.map((c) => (
+              <tr key={`${e.id}-${c.id}`} className="drill-row">
+                <th scope="row"><a href={`#/customers/${c.id}`}>{c.name}</a></th>
+                {columns.map((col) => <td key={col}><Money value={c[by][col]} /></td>)}
+                <td><Money value={c.total} /></td>
+              </tr>
+            ))}
+          </Fragment>
+        );
+      })}
+    </tbody>
   );
 }

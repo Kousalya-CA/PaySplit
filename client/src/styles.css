@@ -215,6 +215,16 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-siz
 .num.zero { color: #b3b6cf; }
 .grid a { color: var(--ink); font-weight: 700; text-underline-offset: 3px; }
 tr.inactive th, tr.inactive td { color: var(--muted); }
+
+/* Summary drill-down: employee -> customers */
+.drill { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; gap: .4rem; }
+.drill:hover { color: var(--green); }
+.drill-caret { display: inline-block; font-size: .8em; color: var(--muted); transition: transform .15s; }
+.drill[aria-expanded="true"] .drill-caret { transform: rotate(90deg); }
+.grid tr.drill-row th, .grid tr.drill-row td { background: var(--paper); font-size: .9rem; color: var(--muted); }
+.grid tr.drill-row th { font-weight: 500; padding-left: 2.2rem; }
+.grid tr.drill-row a { color: var(--muted); font-weight: 600; }
+.grid tr.drill-row a:hover { color: var(--ink); }
 .row-actions { display: flex; gap: 1rem; }
 .rename { display: flex; gap: .4rem; align-items: center; }
 .rename input { min-width: 10rem; }
