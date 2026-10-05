@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, periodLabel, pct, parseNum, money, addMonths, periodMonths } from '../format.js';
+import { monthLabel, periodLabel, pct, money, addMonths, periodMonths } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
-import { SplitInputs, FrequencyChoice } from './CustomersPage.jsx';
+import { FrequencyChoice } from './CustomersPage.jsx';
+import RevenueShares, { sharesFromCustomer, relayoutShares, sharesForApi, shareMonths } from './RevenueShares.jsx';
 import PeriodEditor from './PeriodEditor.jsx';
 
 export default function CustomerDetail({ id }) {
@@ -79,8 +80,15 @@ export default function CustomerDetail({ id }) {
           <h1>{customer.name}</h1>
           <p className="muted">
             {customer.frequency} payment, onboarded {monthLabel(customer.onboard_month)}.
-            Direct {pct(customer.direct_pct)}, Support {pct(customer.support_pct)}, Others {pct(customer.others_pct)}.
           </p>
+          <ul className="share-list muted small">
+            {customer.shares.map((s) => (
+              <li key={s.id}>
+                <strong>{s.name}</strong> ({shareMonths(s, customer.frequency)}): Direct {pct(s.direct_pct)},
+                Support {pct(s.support_pct)}, Others {pct(s.others_pct)}
+              </li>
+            ))}
+          </ul>
         </div>
         {!editing && <button className="secondary" onClick={() => setEditing(true)}>Edit customer</button>}
       </div>
@@ -133,11 +141,11 @@ export default function CustomerDetail({ id }) {
 function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
   const [name, setName] = useState(customer.name);
   const [frequency, setFrequency] = useState(customer.frequency);
-  const [split, setSplit] = useState({
-    direct: String(+(customer.direct_pct * 100).toFixed(4)),
-    support: String(+(customer.support_pct * 100).toFixed(4)),
-    others: String(+(customer.others_pct * 100).toFixed(4)),
-  });
+  const [shares, setShares] = useState(() => sharesFromCustomer(customer));
+  const changeFrequency = (f) => {
+    setFrequency(f);
+    setShares(relayoutShares(shares, customer.onboard_month, f));
+  };
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -149,9 +157,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
       onSaved(await api.customers.update(customer.id, {
         name,
         frequency,
-        direct_pct: parseNum(split.direct) / 100,
-        support_pct: parseNum(split.support) / 100,
-        others_pct: parseNum(split.others) / 100,
+        shares: sharesForApi(shares),
       }));
     } catch (err) {
       setError(err.message);
@@ -167,10 +173,10 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
         <span>Customer name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} required />
       </label>
-      <FrequencyChoice value={frequency} onChange={setFrequency} />
-      <SplitInputs values={split} onChange={setSplit} />
+      <FrequencyChoice value={frequency} onChange={changeFrequency} />
+      <RevenueShares shares={shares} onChange={setShares} onboard={customer.onboard_month} frequency={frequency} />
       <p className="muted small">
-        Changing these percentages recalculates pay for every period of this customer.
+        Changing a revenue share recalculates pay for the periods it covers.
         The payment frequency can only be changed before any revenue or split is entered.
         The onboard month can't be changed after the customer is created.
       </p>

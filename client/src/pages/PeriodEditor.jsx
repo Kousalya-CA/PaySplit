@@ -32,7 +32,11 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
   const rev = parseNum(revenue);
   const revValue = Number.isFinite(rev) ? rev : 0;
-  const categoryPct = { Direct: customer.direct_pct, Support: customer.support_pct, Others: customer.others_pct };
+  // The revenue share covering this period. With none, every category gets 0%.
+  const share = period.share;
+  const categoryPct = share
+    ? { Direct: share.direct_pct, Support: share.support_pct, Others: share.others_pct }
+    : { Direct: 0, Support: 0, Others: 0 };
 
   const stats = useMemo(() => Object.fromEntries(CATEGORIES.map((cat) => {
     const pool = revValue * categoryPct[cat];
@@ -104,6 +108,13 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
         <div>
           <h2>{label}</h2>
           <p className="muted small">{wording.note}</p>
+          {share ? (
+            <p className="muted small">Uses the <strong>{share.name}</strong> revenue share.</p>
+          ) : (
+            <p className="warn-text small">
+              No revenue share covers {label}, so pay is ₹0. Add a share type for it in Edit customer.
+            </p>
+          )}
         </div>
         <label className="revenue">
           <span>{wording.revenue}</span>

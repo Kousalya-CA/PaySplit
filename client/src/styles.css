@@ -184,6 +184,13 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .choice strong { color: var(--ink); }
 .split-inputs .row > label { flex: 1; min-width: 6rem; }
 .split-inputs p { margin: .4rem 0 0; }
+.shares { display: grid; gap: 1rem; }
+.shares > button { justify-self: start; }
+.share { border: 2px solid var(--line); border-radius: .6rem; padding: .9rem 1rem 1rem; display: grid; gap: .6rem; }
+.page .share legend { padding: 0 .35rem; margin-bottom: 0; }
+.share .row > label.grow { flex: 2; min-width: 12rem; }
+.share-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+.share-list { margin: .3rem 0 0; padding-left: 1.1rem; }
 .actions { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
 .actions .primary { margin-top: 0; }
 .inline-form { display: flex; gap: .75rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1rem; max-width: 36rem; }

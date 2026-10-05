@@ -48,11 +48,15 @@ const q = {
       (SELECT COALESCE(SUM(pay), 0) FROM payments x WHERE x.customer_id = c.id) AS total_paid
     FROM customers c ORDER BY c.name`),
   customer: db.prepare('SELECT * FROM customers WHERE id = ?'),
-  insertCustomer: db.prepare(`
-    INSERT INTO customers (name, onboard_month, frequency, direct_pct, support_pct, others_pct)
-    VALUES (?, ?, ?, ?, ?, ?)`),
-  updateCustomer: db.prepare(`
-    UPDATE customers SET name = ?, frequency = ?, direct_pct = ?, support_pct = ?, others_pct = ? WHERE id = ?`),
+  insertCustomer: db.prepare('INSERT INTO customers (name, onboard_month, frequency) VALUES (?, ?, ?)'),
+  updateCustomer: db.prepare('UPDATE customers SET name = ?, frequency = ? WHERE id = ?'),
+
+  allShares: db.prepare('SELECT * FROM shares ORDER BY customer_id, from_month'),
+  sharesFor: db.prepare('SELECT * FROM shares WHERE customer_id = ? ORDER BY from_month'),
+  deleteSharesFor: db.prepare('DELETE FROM shares WHERE customer_id = ?'),
+  insertShare: db.prepare(`
+    INSERT INTO shares (customer_id, name, from_month, to_month, direct_pct, support_pct, others_pct)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`),
   customerHasData: db.prepare(`
     SELECT EXISTS (
       SELECT 1 FROM periods p WHERE p.customer_id = ?
@@ -94,21 +98,67 @@ const q = {
 };
 
 // ---------- validation -------------------------------------------------------
-function parseSplit(body) {
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthLabel = (ym) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+
+function parseSplit(src, name) {
   const pcts = {
-    direct: toNumber(body.direct_pct, 'Direct %'),
-    support: toNumber(body.support_pct, 'Support %'),
-    others: toNumber(body.others_pct, 'Others %'),
+    direct: toNumber(src.direct_pct, `${name}: Direct %`),
+    support: toNumber(src.support_pct, `${name}: Support %`),
+    others: toNumber(src.others_pct, `${name}: Others %`),
   };
   for (const [k, v] of Object.entries(pcts)) {
-    if (v < 0 || v > 1) throw new HttpError(400, `The ${k} share must be between 0% and 100%.`);
+    if (v < 0 || v > 1) throw new HttpError(400, `${name}: the ${k} share must be between 0% and 100%.`);
   }
   const sum = pcts.direct + pcts.support + pcts.others;
   if (Math.abs(sum - 1) > EPS) {
-    throw new HttpError(400, `Direct, Support and Others must add up to 100%. They add up to ${+(sum * 100).toFixed(2)}%.`);
+    throw new HttpError(400, `${name}: Direct, Support and Others must add up to 100%. They add up to ${+(sum * 100).toFixed(2)}%.`);
   }
   return pcts;
 }
+
+// Revenue shares. The first is always "Onboarding" and starts in the onboard month: for Monthly
+// it runs to a To month you choose; for Yearly and Three Years it's the one-time onboarding payment
+// (To = From). Every share added after it (Renewal, ...) has From and To months, where no To month
+// means ongoing. A period uses the share covering its start month, so shares can't overlap.
+function parseShares(list, onboard, frequency) {
+  if (!Array.isArray(list) || list.length === 0) throw new HttpError(400, 'Add at least one revenue share.');
+  const oneTimeOnboarding = frequency !== 'Monthly';
+  const shares = list.map((s, i) => {
+    const name = i === 0 ? 'Onboarding' : String(s.name ?? '').trim();
+    if (!name) throw new HttpError(400, `Enter a name for revenue share ${i + 1}.`);
+    const from = i === 0 ? onboard : String(s.from_month ?? '');
+    if (!MONTH_RE.test(from)) throw new HttpError(400, `${name}: choose the From month.`);
+    if (from < onboard) throw new HttpError(400, `${name} starts before the onboard month (${monthLabel(onboard)}).`);
+    let to = from;
+    if (!(i === 0 && oneTimeOnboarding)) {
+      to = s.to_month ? String(s.to_month) : null;
+      if (to !== null && !MONTH_RE.test(to)) throw new HttpError(400, `${name}: the To month isn't a valid month.`);
+      if (to !== null && to < from) throw new HttpError(400, `${name}: the To month is before the From month.`);
+    }
+    return { name, from, to, ...parseSplit(s, name) };
+  }).sort((a, b) => a.from.localeCompare(b.from));
+
+  for (let i = 1; i < shares.length; i++) {
+    const a = shares[i - 1];
+    const b = shares[i];
+    if (a.to === null || a.to >= b.from) {
+      throw new HttpError(400, a.to === null
+        ? `${a.name} has no To month, so it overlaps ${b.name}. Give ${a.name} a To month before ${monthLabel(b.from)}.`
+        : `${a.name} (to ${monthLabel(a.to)}) overlaps ${b.name} (from ${monthLabel(b.from)}). Each month can only have one revenue share.`);
+    }
+  }
+  return shares;
+}
+
+function saveShares(customerId, shares) {
+  q.deleteSharesFor.run(customerId);
+  for (const s of shares) q.insertShare.run(customerId, s.name, s.from, s.to, s.direct, s.support, s.others);
+}
+
+// The share whose months cover a period, or null.
+const shareFor = (shares, month) =>
+  shares.find((s) => month >= s.from_month && (s.to_month === null || month <= s.to_month)) || null;
 
 function requireCustomer(id) {
   const c = q.customer.get(id);
@@ -129,14 +179,18 @@ function createStartingPeriods(customerId, onboard, frequency) {
 
 function customerDetail(id) {
   const customer = requireCustomer(id);
-  const pctFor = { Direct: customer.direct_pct, Support: customer.support_pct, Others: customer.others_pct };
+  const shares = q.sharesFor.all(id);
   const allocations = q.allocationsForCustomer.all(id);
   const periods = q.periodsFor.all(id).map((p) => {
+    const share = shareFor(shares, p.start_month);
+    const pctFor = share
+      ? { Direct: share.direct_pct, Support: share.support_pct, Others: share.others_pct }
+      : { Direct: 0, Support: 0, Others: 0 };
     const rows = allocations.filter((a) => a.period_id === p.id)
       .map((a) => ({ ...a, active: Boolean(a.active), pay: p.revenue * pctFor[a.category] * a.weightage }));
-    return { ...p, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
+    return { ...p, share, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
   });
-  return { ...customer, periods };
+  return { ...customer, shares, periods };
 }
 
 // ---------- routes -----------------------------------------------------------
@@ -193,7 +247,10 @@ export function registerDataRoutes(router) {
   });
 
   // Customers
-  router.get('/api/customers', () => q.customers.all());
+  router.get('/api/customers', () => {
+    const shares = q.allShares.all();
+    return q.customers.all().map((c) => ({ ...c, shares: shares.filter((s) => s.customer_id === c.id) }));
+  });
 
   router.post('/api/customers', ({ body, setStatus }) => {
     const name = String(body.name ?? '').trim();
@@ -201,16 +258,17 @@ export function registerDataRoutes(router) {
     if (!name) throw new HttpError(400, 'Enter the customer name.');
     if (!MONTH_RE.test(onboard)) throw new HttpError(400, 'Choose the onboard month.');
     const frequency = parseFrequency(body.frequency);
-    const split = parseSplit(body);
+    const shares = parseShares(body.shares, onboard, frequency);
 
     const id = transaction(() => {
       let customerId;
       try {
-        customerId = Number(q.insertCustomer.run(name, onboard, frequency, split.direct, split.support, split.others).lastInsertRowid);
+        customerId = Number(q.insertCustomer.run(name, onboard, frequency).lastInsertRowid);
       } catch (err) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;
       }
+      saveShares(customerId, shares);
       createStartingPeriods(customerId, onboard, frequency);
       return customerId;
     });
@@ -224,10 +282,11 @@ export function registerDataRoutes(router) {
     const current = requireCustomer(params.id);
     const name = body.name === undefined ? current.name : String(body.name).trim();
     if (!name) throw new HttpError(400, 'Enter the customer name.');
-    const split = body.direct_pct === undefined
-      ? { direct: current.direct_pct, support: current.support_pct, others: current.others_pct }
-      : parseSplit(body);
     const frequency = body.frequency === undefined ? current.frequency : parseFrequency(body.frequency);
+    if (frequency !== current.frequency && body.shares === undefined) {
+      throw new HttpError(400, 'Send the revenue shares when changing the payment frequency.');
+    }
+    const shares = body.shares === undefined ? null : parseShares(body.shares, current.onboard_month, frequency);
 
     // Each frequency has a different period length (1, 12 or 36 months), so switching replaces the
     // periods. That's only allowed before any revenue or split is entered.
@@ -238,11 +297,12 @@ export function registerDataRoutes(router) {
 
     transaction(() => {
       try {
-        q.updateCustomer.run(name, frequency, split.direct, split.support, split.others, params.id);
+        q.updateCustomer.run(name, frequency, params.id);
       } catch (err) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;
       }
+      if (shares) saveShares(params.id, shares);
       if (frequencyChanged) {
         q.deletePeriodsFor.run(params.id);
         createStartingPeriods(params.id, current.onboard_month, frequency);

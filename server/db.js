@@ -40,18 +40,30 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  -- Customers: onboard month, billing frequency and the Direct/Support/Others split.
-  -- Percentages are stored as fractions (0.7 = 70%).
+  -- Customers: onboard month and billing frequency. The Direct/Support/Others split is in shares.
   CREATE TABLE IF NOT EXISTS customers (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     name          TEXT NOT NULL UNIQUE COLLATE NOCASE,
     onboard_month TEXT NOT NULL,                  -- 'YYYY-MM'
     frequency     TEXT NOT NULL CHECK (frequency IN ('Monthly', 'Yearly', 'Three Years')),
-    direct_pct    REAL NOT NULL,
-    support_pct   REAL NOT NULL,
-    others_pct    REAL NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- Revenue shares: the Direct/Support/Others split for a range of months. The first one is
+  -- "Onboarding"; more can be added (e.g. "Renewal"). A period uses the share covering its
+  -- start month. to_month NULL means ongoing. For Yearly and Three Years the Onboarding share is
+  -- the one-time onboarding payment (from_month = to_month). Percentages are fractions (0.7 = 70%).
+  CREATE TABLE IF NOT EXISTS shares (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    from_month  TEXT NOT NULL,                    -- 'YYYY-MM'
+    to_month    TEXT,                             -- 'YYYY-MM', or NULL for ongoing
+    direct_pct  REAL NOT NULL,
+    support_pct REAL NOT NULL,
+    others_pct  REAL NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_shares_customer ON shares(customer_id);
 
   -- One row per billing period (36 months for Three Years, a year for Yearly, a month for Monthly)
   CREATE TABLE IF NOT EXISTS periods (
@@ -106,35 +118,6 @@ if (!customersSql.includes('Three Years')) {
   }
 }
 
-db.exec(`
-  -- Pay is never stored: it is always Revenue x Category % x Weightage %
-  -- (the same formula as the Excel workbook).
-  CREATE VIEW IF NOT EXISTS payments AS
-  SELECT
-    a.id           AS id,
-    c.id           AS customer_id,
-    c.name         AS customer,
-    c.frequency    AS frequency,
-    p.id           AS period_id,
-    p.start_month  AS start_month,
-    a.category     AS category,
-    e.id           AS employee_id,
-    e.name         AS employee,
-    p.revenue      AS revenue,
-    CASE a.category WHEN 'Direct' THEN c.direct_pct
-                    WHEN 'Support' THEN c.support_pct
-                    ELSE c.others_pct END AS category_pct,
-    a.weightage    AS weightage,
-    p.revenue * a.weightage *
-      CASE a.category WHEN 'Direct' THEN c.direct_pct
-                      WHEN 'Support' THEN c.support_pct
-                      ELSE c.others_pct END AS pay
-  FROM allocations a
-  JOIN periods   p ON p.id = a.period_id
-  JOIN customers c ON c.id = p.customer_id
-  JOIN employees e ON e.id = a.employee_id;
-`);
-
 // Three Years customers used to get three 12-month periods; now they get one 36-month period.
 // Remove the old empty Year 2 / Year 3 periods (any that start between the 36-month steps).
 // Periods with revenue or a split are kept so no entered pay is lost.
@@ -146,6 +129,63 @@ db.exec(`
           FROM customers c WHERE c.id = periods.customer_id)) % 36 <> 0
     AND revenue = 0
     AND NOT EXISTS (SELECT 1 FROM allocations a WHERE a.period_id = periods.id);
+`);
+
+// Customers used to hold one Direct/Support/Others split. Move it into shares so nothing's pay
+// changes: Monthly customers get one ongoing "Onboarding" share; Yearly and Three Years customers
+// get one share per existing payment ("Onboarding" for the first, "Renewal" after that).
+const customerColumns = new Set(db.prepare('PRAGMA table_info(customers)').all().map((c) => c.name));
+if (customerColumns.has('direct_pct')) {
+  transaction(() => db.exec(`
+    DROP VIEW IF EXISTS payments;
+    INSERT INTO shares (customer_id, name, from_month, to_month, direct_pct, support_pct, others_pct)
+      SELECT id, 'Onboarding', onboard_month, NULL, direct_pct, support_pct, others_pct
+      FROM customers WHERE frequency = 'Monthly';
+    INSERT INTO shares (customer_id, name, from_month, to_month, direct_pct, support_pct, others_pct)
+      SELECT c.id, CASE WHEN p.start_month = c.onboard_month THEN 'Onboarding' ELSE 'Renewal' END,
+             p.start_month, p.start_month, c.direct_pct, c.support_pct, c.others_pct
+      FROM customers c JOIN periods p ON p.customer_id = c.id
+      WHERE c.frequency <> 'Monthly';
+    INSERT INTO shares (customer_id, name, from_month, to_month, direct_pct, support_pct, others_pct)
+      SELECT id, 'Onboarding', onboard_month, onboard_month, direct_pct, support_pct, others_pct
+      FROM customers c WHERE NOT EXISTS (SELECT 1 FROM shares s WHERE s.customer_id = c.id);
+    ALTER TABLE customers DROP COLUMN direct_pct;
+    ALTER TABLE customers DROP COLUMN support_pct;
+    ALTER TABLE customers DROP COLUMN others_pct;
+  `));
+}
+
+db.exec(`
+  -- Pay is never stored: it is always Revenue x Category % x Weightage %
+  -- (the same formula as the Excel workbook), using the share that covers the period.
+  -- Allocations in a period with no share are left out (pay 0).
+  CREATE VIEW IF NOT EXISTS payments AS
+  SELECT
+    a.id           AS id,
+    c.id           AS customer_id,
+    c.name         AS customer,
+    c.frequency    AS frequency,
+    p.id           AS period_id,
+    p.start_month  AS start_month,
+    a.category     AS category,
+    e.id           AS employee_id,
+    e.name         AS employee,
+    s.name         AS share,
+    p.revenue      AS revenue,
+    CASE a.category WHEN 'Direct' THEN s.direct_pct
+                    WHEN 'Support' THEN s.support_pct
+                    ELSE s.others_pct END AS category_pct,
+    a.weightage    AS weightage,
+    p.revenue * a.weightage *
+      CASE a.category WHEN 'Direct' THEN s.direct_pct
+                      WHEN 'Support' THEN s.support_pct
+                      ELSE s.others_pct END AS pay
+  FROM allocations a
+  JOIN periods   p ON p.id = a.period_id
+  JOIN customers c ON c.id = p.customer_id
+  JOIN employees e ON e.id = a.employee_id
+  JOIN shares    s ON s.customer_id = c.id AND p.start_month >= s.from_month
+                  AND (s.to_month IS NULL OR p.start_month <= s.to_month);
 `);
 
 // Users added before roles existed get the new columns. Invited users have an empty

@@ -40,10 +40,14 @@ transaction(() => {
   const empId = (name) => db.prepare('SELECT id FROM employees WHERE name = ?').get(name).id;
 
   for (const c of CUSTOMERS) {
-    const customerId = Number(db.prepare(`
-      INSERT INTO customers (name, onboard_month, frequency, direct_pct, support_pct, others_pct)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(c.name, c.onboard, c.frequency, ...c.split).lastInsertRowid);
+    const customerId = Number(db.prepare('INSERT INTO customers (name, onboard_month, frequency) VALUES (?, ?, ?)')
+      .run(c.name, c.onboard, c.frequency).lastInsertRowid);
     const { step, count } = FREQUENCIES[c.frequency];
+    // One "Onboarding" share covering the starting periods.
+    db.prepare(`
+      INSERT INTO shares (customer_id, name, from_month, to_month, direct_pct, support_pct, others_pct)
+      VALUES (?, 'Onboarding', ?, ?, ?, ?, ?)`)
+      .run(customerId, c.onboard, addMonths(c.onboard, (count - 1) * step), ...c.split);
     for (let i = 0; i < count; i++) {
       const data = c.periods[i] || { revenue: 0 };
       const periodId = Number(db.prepare('INSERT INTO periods (customer_id, start_month, revenue) VALUES (?, ?, ?)')
