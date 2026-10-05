@@ -84,7 +84,7 @@ export function SplitInputs({ values, onChange }) {
 const FREQUENCY_OPTIONS = [
   ['Monthly', 'Enter revenue and the split each month. PaySplit creates 12 months from the onboard month.'],
   ['Yearly', 'Enter the annual revenue once. The split holds for 12 months from the onboard month.'],
-  ['Three Years', 'A 36-month contract. PaySplit creates Year 1, Year 2 and Year 3 from the onboard month, each with its own revenue and split.'],
+  ['Three Years', 'Enter the revenue for the whole contract once. The split holds for 36 months from the onboard month.'],
 ];
 
 export function FrequencyChoice({ value, onChange }) {

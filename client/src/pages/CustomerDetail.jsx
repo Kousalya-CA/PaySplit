@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, periodLabel, pct, parseNum, money, addMonths, isYearly, periodStep, contractYearLabel } from '../format.js';
+import { monthLabel, periodLabel, pct, parseNum, money, addMonths, periodMonths } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { SplitInputs, FrequencyChoice } from './CustomersPage.jsx';
@@ -68,7 +68,7 @@ export default function CustomerDetail({ id }) {
   };
 
   const nextStart = periods.length
-    ? monthLabel(addMonths(periods.at(-1).start_month, periodStep(customer.frequency)))
+    ? monthLabel(addMonths(periods.at(-1).start_month, periodMonths(customer.frequency)))
     : monthLabel(customer.onboard_month);
 
   return (
@@ -78,9 +78,7 @@ export default function CustomerDetail({ id }) {
         <div>
           <h1>{customer.name}</h1>
           <p className="muted">
-            {customer.frequency === 'Three Years'
-              ? `Three Years payment, ${monthLabel(customer.onboard_month)} to ${monthLabel(addMonths(customer.onboard_month, 35))} (36 months).`
-              : `${customer.frequency} payment, onboarded ${monthLabel(customer.onboard_month)}.`}
+            {customer.frequency} payment, onboarded {monthLabel(customer.onboard_month)}.
             Direct {pct(customer.direct_pct)}, Support {pct(customer.support_pct)}, Others {pct(customer.others_pct)}.
           </p>
         </div>
@@ -93,23 +91,18 @@ export default function CustomerDetail({ id }) {
           onSaved={(c) => {
             setCustomer(c);
             setEditing(false);
-            // Switching to or from Monthly replaces the periods.
+            // Changing the frequency replaces the periods.
             if (!c.periods.some((p) => p.id === selectedId)) { setDirty(false); setSelectedId(c.periods[0]?.id ?? null); }
           }} onDelete={deleteCustomer} />
       )}
 
       <div className="periods-bar">
-        <h2 id="periods-label">{isYearly(customer.frequency) ? 'Years' : 'Months'}</h2>
+        <h2 id="periods-label">{periodMonths(customer.frequency) > 1 ? 'Years' : 'Months'}</h2>
         <div className="period-tabs" role="tablist" aria-labelledby="periods-label">
           {periods.map((p) => (
             <button key={p.id} role="tab" aria-selected={p.id === selectedId}
               className={`period-tab ${p.revenue > 0 ? 'has-revenue' : ''}`} onClick={() => choosePeriod(p.id)}>
-              {contractYearLabel(customer, p.start_month) ? (
-                <>
-                  <span>{contractYearLabel(customer, p.start_month)}</span>
-                  <small>{periodLabel(p.start_month, customer.frequency)}</small>
-                </>
-              ) : <span>{periodLabel(p.start_month, customer.frequency)}</span>}
+              <span>{periodLabel(p.start_month, customer.frequency)}</span>
               <small>{p.revenue > 0 ? money(p.revenue) : 'No revenue'}</small>
             </button>
           ))}
@@ -178,8 +171,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
       <SplitInputs values={split} onChange={setSplit} />
       <p className="muted small">
         Changing these percentages recalculates pay for every period of this customer.
-        Switching between Yearly and Three Years keeps every year already entered.
-        Switching to or from Monthly is only possible before any revenue or split is entered.
+        The payment frequency can only be changed before any revenue or split is entered.
         The onboard month can't be changed after the customer is created.
       </p>
       <div className="actions">

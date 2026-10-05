@@ -6,3 +6,6 @@ data/
 *.db-shm
 .env
 .DS_Store
+
+# Old placeholder page from the first version, kept locally but not used by the app
+client/src/pages/Dashboard.jsx

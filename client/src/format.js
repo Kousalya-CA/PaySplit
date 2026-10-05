@@ -15,21 +15,13 @@ export const addMonths = (ym, n) => {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 };
 
-// Yearly and Three Years customers both have one period per year; Monthly ones one per month.
-export const isYearly = (frequency) => frequency === 'Yearly' || frequency === 'Three Years';
-export const periodStep = (frequency) => (isYearly(frequency) ? 12 : 1);
+// Months in one period: 36 for Three Years, 12 for Yearly, 1 for Monthly.
+export const periodMonths = (frequency) => ({ 'Three Years': 36, Yearly: 12 }[frequency] || 1);
 
-export const periodLabel = (ym, frequency) =>
-  isYearly(frequency) ? `${monthLabel(ym)} to ${monthLabel(addMonths(ym, 11))}` : monthLabel(ym);
-
-// Three Years customers: 'Year 1 of 3' for the period starting in the onboard month, and so on.
-// Years added after the contract ends are just 'Year 4', 'Year 5'. Null for other frequencies.
-export const contractYearLabel = (customer, ym) => {
-  if (customer.frequency !== 'Three Years') return null;
-  const [y1, m1] = customer.onboard_month.split('-').map(Number);
-  const [y2, m2] = ym.split('-').map(Number);
-  const n = Math.floor(((y2 - y1) * 12 + (m2 - m1)) / 12) + 1;
-  return n >= 1 && n <= 3 ? `Year ${n} of 3` : `Year ${n}`;
+// 'Oct 2026' for a month, 'Oct 2026 to Sep 2027' for a year, 'Oct 2026 to Sep 2029' for three years.
+export const periodLabel = (ym, frequency) => {
+  const months = periodMonths(frequency);
+  return months > 1 ? `${monthLabel(ym)} to ${monthLabel(addMonths(ym, months - 1))}` : monthLabel(ym);
 };
 
 // 0.142857 -> '14.29%'

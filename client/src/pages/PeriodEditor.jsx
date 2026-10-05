@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { money, periodLabel, pct, toPctInput, parseNum, monthLabel, isYearly as isYearlyFrequency, contractYearLabel } from '../format.js';
+import { money, periodLabel, pct, toPctInput, parseNum, monthLabel } from '../format.js';
 import { ErrorNote } from '../components/common.jsx';
 
 const CATEGORIES = ['Direct', 'Support', 'Others'];
@@ -19,7 +19,6 @@ const fractionOf = (row) => (row.exact != null ? row.exact : parseNum(row.weight
 // Pay = Revenue x Category % x Weightage %, recalculated as you type.
 export default function PeriodEditor({ customer, period, prev, employees, onSaved, onDirtyChange }) {
   const label = periodLabel(period.start_month, customer.frequency);
-  const yearLabel = contractYearLabel(customer, period.start_month);
   const [revenue, setRevenue] = useState(String(period.revenue));
   const [rows, setRows] = useState(() => rowsFrom(period.allocations));
   const [dirty, setDirty] = useState(false);
@@ -91,19 +90,23 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   };
 
   const totalPaid = CATEGORIES.reduce((s, c) => s + stats[c].paid, 0);
-  const isYearly = isYearlyFrequency(customer.frequency);
+  const wording = {
+    'Three Years': { note: 'One split for the whole 36 months.', revenue: 'Revenue for the 3 years' },
+    Yearly: { note: 'One split for the whole year.', revenue: 'Annual revenue' },
+  }[customer.frequency] || {
+    note: 'This month\'s split. It can be different every month.',
+    revenue: `Revenue for ${monthLabel(period.start_month)}`,
+  };
 
   return (
     <div className="period">
       <div className="period-head">
         <div>
-          <h2>{yearLabel || label}</h2>
-          <p className="muted small">
-            {yearLabel && `${label}. `}{isYearly ? 'One split for the whole year.' : 'This month\'s split. It can be different every month.'}
-          </p>
+          <h2>{label}</h2>
+          <p className="muted small">{wording.note}</p>
         </div>
         <label className="revenue">
-          <span>{isYearly ? 'Annual revenue' : `Revenue for ${monthLabel(period.start_month)}`}</span>
+          <span>{wording.revenue}</span>
           <span className="prefix-input">
             <span aria-hidden="true">₹</span>
             <input inputMode="decimal" value={revenue} onChange={(e) => change(() => setRevenue(e.target.value))} />

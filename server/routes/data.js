@@ -7,11 +7,11 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const EPS = 1e-6;
 
 // Months per period, and how many periods a new customer starts with:
-// 12 months for Monthly, 1 year for Yearly, Year 1-3 for Three Years.
+// 12 months for Monthly, one 12-month period for Yearly, one 36-month period for Three Years.
 export const FREQUENCIES = {
   Monthly: { step: 1, count: 12 },
   Yearly: { step: 12, count: 1 },
-  'Three Years': { step: 12, count: 3 },
+  'Three Years': { step: 36, count: 1 },
 };
 
 export function addMonths(ym, n) {
@@ -121,15 +121,10 @@ function parseFrequency(value) {
   return value;
 }
 
-// The periods a customer starts with, e.g. Three Years: onboard, +12 and +24 months.
-// Periods that already exist are left alone.
+// The periods a new customer starts with (same as the workbook for Monthly and Yearly).
 function createStartingPeriods(customerId, onboard, frequency) {
   const { step, count } = FREQUENCIES[frequency];
-  const existing = new Set(q.periodsFor.all(customerId).map((p) => p.start_month));
-  for (let i = 0; i < count; i++) {
-    const start = addMonths(onboard, i * step);
-    if (!existing.has(start)) q.insertPeriod.run(customerId, start, 0);
-  }
+  for (let i = 0; i < count; i++) q.insertPeriod.run(customerId, addMonths(onboard, i * step), 0);
 }
 
 function customerDetail(id) {
@@ -234,11 +229,10 @@ export function registerDataRoutes(router) {
       : parseSplit(body);
     const frequency = body.frequency === undefined ? current.frequency : parseFrequency(body.frequency);
 
-    // Yearly and Three Years both use 12-month periods, so switching between them keeps every
-    // period (switching to Three Years adds any missing Year 2 and Year 3). Switching to or from
-    // Monthly changes the period length, so it's only allowed before any revenue or split is entered.
-    const stepChanged = FREQUENCIES[frequency].step !== FREQUENCIES[current.frequency].step;
-    if (stepChanged && q.customerHasData.get(params.id).has_data) {
+    // Each frequency has a different period length (1, 12 or 36 months), so switching replaces the
+    // periods. That's only allowed before any revenue or split is entered.
+    const frequencyChanged = frequency !== current.frequency;
+    if (frequencyChanged && q.customerHasData.get(params.id).has_data) {
       throw new HttpError(409, `${current.name} already has revenue or splits entered, so it can't switch between ${current.frequency} and ${frequency}. Clear them first, or add a new customer.`);
     }
 
@@ -249,8 +243,8 @@ export function registerDataRoutes(router) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;
       }
-      if (frequency !== current.frequency) {
-        if (stepChanged) q.deletePeriodsFor.run(params.id);
+      if (frequencyChanged) {
+        q.deletePeriodsFor.run(params.id);
         createStartingPeriods(params.id, current.onboard_month, frequency);
       }
     });

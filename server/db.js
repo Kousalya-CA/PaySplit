@@ -53,7 +53,7 @@ db.exec(`
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  -- One row per billing period (a year for Yearly and Three Years customers, a month for Monthly ones)
+  -- One row per billing period (36 months for Three Years, a year for Yearly, a month for Monthly)
   CREATE TABLE IF NOT EXISTS periods (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -133,6 +133,19 @@ db.exec(`
   JOIN periods   p ON p.id = a.period_id
   JOIN customers c ON c.id = p.customer_id
   JOIN employees e ON e.id = a.employee_id;
+`);
+
+// Three Years customers used to get three 12-month periods; now they get one 36-month period.
+// Remove the old empty Year 2 / Year 3 periods (any that start between the 36-month steps).
+// Periods with revenue or a split are kept so no entered pay is lost.
+db.exec(`
+  DELETE FROM periods
+  WHERE customer_id IN (SELECT id FROM customers WHERE frequency = 'Three Years')
+    AND ((CAST(substr(start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(start_month, 6, 2) AS INTEGER))
+       - (SELECT CAST(substr(onboard_month, 1, 4) AS INTEGER) * 12 + CAST(substr(onboard_month, 6, 2) AS INTEGER)
+          FROM customers c WHERE c.id = periods.customer_id)) % 36 <> 0
+    AND revenue = 0
+    AND NOT EXISTS (SELECT 1 FROM allocations a WHERE a.period_id = periods.id);
 `);
 
 // Users added before roles existed get the new columns. Invited users have an empty
