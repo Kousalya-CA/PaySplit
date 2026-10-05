@@ -22,6 +22,16 @@ export const periodStep = (frequency) => (isYearly(frequency) ? 12 : 1);
 export const periodLabel = (ym, frequency) =>
   isYearly(frequency) ? `${monthLabel(ym)} to ${monthLabel(addMonths(ym, 11))}` : monthLabel(ym);
 
+// Three Years customers: 'Year 1 of 3' for the period starting in the onboard month, and so on.
+// Years added after the contract ends are just 'Year 4', 'Year 5'. Null for other frequencies.
+export const contractYearLabel = (customer, ym) => {
+  if (customer.frequency !== 'Three Years') return null;
+  const [y1, m1] = customer.onboard_month.split('-').map(Number);
+  const [y2, m2] = ym.split('-').map(Number);
+  const n = Math.floor(((y2 - y1) * 12 + (m2 - m1)) / 12) + 1;
+  return n >= 1 && n <= 3 ? `Year ${n} of 3` : `Year ${n}`;
+};
+
 // 0.142857 -> '14.29%'
 export const pct = (fraction) => `${+(fraction * 100).toFixed(2)}%`;
 

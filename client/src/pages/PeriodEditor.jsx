@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { money, periodLabel, pct, toPctInput, parseNum, monthLabel, isYearly as isYearlyFrequency } from '../format.js';
+import { money, periodLabel, pct, toPctInput, parseNum, monthLabel, isYearly as isYearlyFrequency, contractYearLabel } from '../format.js';
 import { ErrorNote } from '../components/common.jsx';
 
 const CATEGORIES = ['Direct', 'Support', 'Others'];
@@ -18,6 +18,8 @@ const fractionOf = (row) => (row.exact != null ? row.exact : parseNum(row.weight
 // Edits one period: revenue plus the contributors in Direct, Support and Others.
 // Pay = Revenue x Category % x Weightage %, recalculated as you type.
 export default function PeriodEditor({ customer, period, prev, employees, onSaved, onDirtyChange }) {
+  const label = periodLabel(period.start_month, customer.frequency);
+  const yearLabel = contractYearLabel(customer, period.start_month);
   const [revenue, setRevenue] = useState(String(period.revenue));
   const [rows, setRows] = useState(() => rowsFrom(period.allocations));
   const [dirty, setDirty] = useState(false);
@@ -70,7 +72,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     try {
       const updated = await api.periods.save(period.id, { revenue: rev, allocations });
       setDirty(false);
-      setNotice(`Saved ${periodLabel(period.start_month, customer.frequency)}.`);
+      setNotice(`Saved ${label}.`);
       onSaved(updated);
     } catch (err) {
       setError(err.message);
@@ -80,7 +82,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   };
 
   const removePeriod = async () => {
-    if (!window.confirm(`Delete the ${periodLabel(period.start_month, customer.frequency)} period and its split?`)) return;
+    if (!window.confirm(`Delete the ${label} period and its split?`)) return;
     try {
       const updated = await api.periods.remove(period.id);
       setDirty(false);
@@ -95,9 +97,9 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     <div className="period">
       <div className="period-head">
         <div>
-          <h2>{periodLabel(period.start_month, customer.frequency)}</h2>
+          <h2>{yearLabel || label}</h2>
           <p className="muted small">
-            {isYearly ? 'One split for the whole year.' : 'This month\'s split. It can be different every month.'}
+            {yearLabel && `${label}. `}{isYearly ? 'One split for the whole year.' : 'This month\'s split. It can be different every month.'}
           </p>
         </div>
         <label className="revenue">

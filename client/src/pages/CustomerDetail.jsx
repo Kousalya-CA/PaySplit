@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, periodLabel, pct, parseNum, money, addMonths, isYearly, periodStep } from '../format.js';
+import { monthLabel, periodLabel, pct, parseNum, money, addMonths, isYearly, periodStep, contractYearLabel } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { SplitInputs, FrequencyChoice } from './CustomersPage.jsx';
@@ -78,7 +78,9 @@ export default function CustomerDetail({ id }) {
         <div>
           <h1>{customer.name}</h1>
           <p className="muted">
-            {customer.frequency} payment, onboarded {monthLabel(customer.onboard_month)}.
+            {customer.frequency === 'Three Years'
+              ? `Three Years payment, ${monthLabel(customer.onboard_month)} to ${monthLabel(addMonths(customer.onboard_month, 35))} (36 months).`
+              : `${customer.frequency} payment, onboarded ${monthLabel(customer.onboard_month)}.`}
             Direct {pct(customer.direct_pct)}, Support {pct(customer.support_pct)}, Others {pct(customer.others_pct)}.
           </p>
         </div>
@@ -102,7 +104,12 @@ export default function CustomerDetail({ id }) {
           {periods.map((p) => (
             <button key={p.id} role="tab" aria-selected={p.id === selectedId}
               className={`period-tab ${p.revenue > 0 ? 'has-revenue' : ''}`} onClick={() => choosePeriod(p.id)}>
-              <span>{periodLabel(p.start_month, customer.frequency)}</span>
+              {contractYearLabel(customer, p.start_month) ? (
+                <>
+                  <span>{contractYearLabel(customer, p.start_month)}</span>
+                  <small>{periodLabel(p.start_month, customer.frequency)}</small>
+                </>
+              ) : <span>{periodLabel(p.start_month, customer.frequency)}</span>}
               <small>{p.revenue > 0 ? money(p.revenue) : 'No revenue'}</small>
             </button>
           ))}
