@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { money, periodLabel, pct, toPctInput, parseNum, monthLabel } from '../format.js';
+import { money, periodLabel, pct, toPctInput, parseNum, monthLabel, isYearly as isYearlyFrequency } from '../format.js';
 import { ErrorNote } from '../components/common.jsx';
 
 const CATEGORIES = ['Direct', 'Support', 'Others'];
@@ -89,7 +89,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   };
 
   const totalPaid = CATEGORIES.reduce((s, c) => s + stats[c].paid, 0);
-  const isYearly = customer.frequency === 'Yearly';
+  const isYearly = isYearlyFrequency(customer.frequency);
 
   return (
     <div className="period">

@@ -81,6 +81,26 @@ export function SplitInputs({ values, onChange }) {
   );
 }
 
+const FREQUENCY_OPTIONS = [
+  ['Monthly', 'Enter revenue and the split each month. PaySplit creates 12 months from the onboard month.'],
+  ['Yearly', 'Enter the annual revenue once. The split holds for 12 months from the onboard month.'],
+  ['Three Years', 'A 36-month contract. PaySplit creates Year 1, Year 2 and Year 3 from the onboard month, each with its own revenue and split.'],
+];
+
+export function FrequencyChoice({ value, onChange }) {
+  return (
+    <fieldset className="choice">
+      <legend>Payment frequency</legend>
+      {FREQUENCY_OPTIONS.map(([frequency, help]) => (
+        <label key={frequency}>
+          <input type="radio" name="freq" checked={value === frequency} onChange={() => onChange(frequency)} />
+          <span><strong>{frequency}</strong> {help}</span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
 function NewCustomerForm({ onCancel }) {
   const [form, setForm] = useState({ name: '', onboard_month: thisMonth(), frequency: 'Monthly' });
   const [split, setSplit] = useState({ direct: '70', support: '20', others: '10' });
@@ -120,17 +140,7 @@ function NewCustomerForm({ onCancel }) {
         </label>
       </div>
 
-      <fieldset className="choice">
-        <legend>Payment frequency</legend>
-        <label>
-          <input type="radio" name="freq" checked={form.frequency === 'Monthly'} onChange={() => setForm({ ...form, frequency: 'Monthly' })} />
-          <span><strong>Monthly</strong> Enter revenue and the split each month. PaySplit creates 12 months from the onboard month.</span>
-        </label>
-        <label>
-          <input type="radio" name="freq" checked={form.frequency === 'Yearly'} onChange={() => setForm({ ...form, frequency: 'Yearly' })} />
-          <span><strong>Yearly</strong> Enter the annual revenue once. The split holds for 12 months from the onboard month.</span>
-        </label>
-      </fieldset>
+      <FrequencyChoice value={form.frequency} onChange={(frequency) => setForm({ ...form, frequency })} />
 
       <SplitInputs values={split} onChange={setSplit} />
 

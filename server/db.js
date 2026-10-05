@@ -46,14 +46,14 @@ db.exec(`
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     name          TEXT NOT NULL UNIQUE COLLATE NOCASE,
     onboard_month TEXT NOT NULL,                  -- 'YYYY-MM'
-    frequency     TEXT NOT NULL CHECK (frequency IN ('Yearly', 'Monthly')),
+    frequency     TEXT NOT NULL CHECK (frequency IN ('Monthly', 'Yearly', 'Three Years')),
     direct_pct    REAL NOT NULL,
     support_pct   REAL NOT NULL,
     others_pct    REAL NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  -- One row per billing period (a year for Yearly customers, a month for Monthly ones)
+  -- One row per billing period (a year for Yearly and Three Years customers, a month for Monthly ones)
   CREATE TABLE IF NOT EXISTS periods (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -75,7 +75,38 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_periods_customer ON periods(customer_id);
   CREATE INDEX IF NOT EXISTS idx_alloc_period ON allocations(period_id);
   CREATE INDEX IF NOT EXISTS idx_alloc_employee ON allocations(employee_id);
+`);
 
+// Databases created before "Three Years" existed have the old frequency CHECK. SQLite can't
+// alter a CHECK, so rebuild the customers table. Foreign keys are off during the swap so the
+// periods (ON DELETE CASCADE) survive, and the view is dropped and recreated below.
+const customersSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'customers'").get().sql;
+if (!customersSql.includes('Three Years')) {
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    transaction(() => db.exec(`
+      DROP VIEW IF EXISTS payments;
+      CREATE TABLE customers_new (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        name          TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        onboard_month TEXT NOT NULL,                  -- 'YYYY-MM'
+        frequency     TEXT NOT NULL CHECK (frequency IN ('Monthly', 'Yearly', 'Three Years')),
+        direct_pct    REAL NOT NULL,
+        support_pct   REAL NOT NULL,
+        others_pct    REAL NOT NULL,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO customers_new SELECT id, name, onboard_month, frequency, direct_pct, support_pct, others_pct, created_at
+        FROM customers;
+      DROP TABLE customers;
+      ALTER TABLE customers_new RENAME TO customers;
+    `));
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+db.exec(`
   -- Pay is never stored: it is always Revenue x Category % x Weightage %
   -- (the same formula as the Excel workbook).
   CREATE VIEW IF NOT EXISTS payments AS

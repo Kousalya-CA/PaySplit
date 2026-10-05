@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, periodLabel, pct, parseNum, money } from '../format.js';
+import { monthLabel, periodLabel, pct, parseNum, money, addMonths, isYearly, periodStep } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
-import { SplitInputs } from './CustomersPage.jsx';
+import { SplitInputs, FrequencyChoice } from './CustomersPage.jsx';
 import PeriodEditor from './PeriodEditor.jsx';
 
 export default function CustomerDetail({ id }) {
@@ -68,7 +68,7 @@ export default function CustomerDetail({ id }) {
   };
 
   const nextStart = periods.length
-    ? monthLabel(addStep(periods.at(-1).start_month, customer.frequency))
+    ? monthLabel(addMonths(periods.at(-1).start_month, periodStep(customer.frequency)))
     : monthLabel(customer.onboard_month);
 
   return (
@@ -88,11 +88,16 @@ export default function CustomerDetail({ id }) {
       <ErrorNote>{error}</ErrorNote>
       {editing && (
         <EditCustomer customer={customer} onCancel={() => setEditing(false)}
-          onSaved={(c) => { setCustomer(c); setEditing(false); }} onDelete={deleteCustomer} />
+          onSaved={(c) => {
+            setCustomer(c);
+            setEditing(false);
+            // Switching to or from Monthly replaces the periods.
+            if (!c.periods.some((p) => p.id === selectedId)) { setDirty(false); setSelectedId(c.periods[0]?.id ?? null); }
+          }} onDelete={deleteCustomer} />
       )}
 
       <div className="periods-bar">
-        <h2 id="periods-label">{customer.frequency === 'Yearly' ? 'Years' : 'Months'}</h2>
+        <h2 id="periods-label">{isYearly(customer.frequency) ? 'Years' : 'Months'}</h2>
         <div className="period-tabs" role="tablist" aria-labelledby="periods-label">
           {periods.map((p) => (
             <button key={p.id} role="tab" aria-selected={p.id === selectedId}
@@ -125,14 +130,9 @@ export default function CustomerDetail({ id }) {
   );
 }
 
-const addStep = (ym, frequency) => {
-  const [y, m] = ym.split('-').map(Number);
-  const d = new Date(Date.UTC(y, m - 1 + (frequency === 'Yearly' ? 12 : 1), 1));
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-};
-
 function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
   const [name, setName] = useState(customer.name);
+  const [frequency, setFrequency] = useState(customer.frequency);
   const [split, setSplit] = useState({
     direct: String(+(customer.direct_pct * 100).toFixed(4)),
     support: String(+(customer.support_pct * 100).toFixed(4)),
@@ -148,6 +148,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
     try {
       onSaved(await api.customers.update(customer.id, {
         name,
+        frequency,
         direct_pct: parseNum(split.direct) / 100,
         support_pct: parseNum(split.support) / 100,
         others_pct: parseNum(split.others) / 100,
@@ -166,10 +167,13 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
         <span>Customer name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} required />
       </label>
+      <FrequencyChoice value={frequency} onChange={setFrequency} />
       <SplitInputs values={split} onChange={setSplit} />
       <p className="muted small">
         Changing these percentages recalculates pay for every period of this customer.
-        The onboard month and payment frequency can't be changed after the customer is created.
+        Switching between Yearly and Three Years keeps every year already entered.
+        Switching to or from Monthly is only possible before any revenue or split is entered.
+        The onboard month can't be changed after the customer is created.
       </p>
       <div className="actions">
         <button className="primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>

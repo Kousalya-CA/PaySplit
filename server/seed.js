@@ -2,7 +2,7 @@
 // starts with the same employees, customers and splits as the workbook.
 // Run with: npm run seed   (only runs when there are no customers yet)
 import { db, transaction } from './db.js';
-import { addMonths } from './routes/data.js';
+import { addMonths, FREQUENCIES } from './routes/data.js';
 
 const EMPLOYEES = ['Soundarya', 'Aswin', 'Akash', 'Roja', 'Vijaisri', 'Divya', 'Giri',
   'Kousalya', 'Keerthivasan', 'Kamesh', 'Rahul', 'Hari', 'Sanjay', 'Gokul'];
@@ -43,11 +43,11 @@ transaction(() => {
     const customerId = Number(db.prepare(`
       INSERT INTO customers (name, onboard_month, frequency, direct_pct, support_pct, others_pct)
       VALUES (?, ?, ?, ?, ?, ?)`).run(c.name, c.onboard, c.frequency, ...c.split).lastInsertRowid);
-    const count = c.frequency === 'Yearly' ? 1 : 12;
+    const { step, count } = FREQUENCIES[c.frequency];
     for (let i = 0; i < count; i++) {
       const data = c.periods[i] || { revenue: 0 };
       const periodId = Number(db.prepare('INSERT INTO periods (customer_id, start_month, revenue) VALUES (?, ?, ?)')
-        .run(customerId, addMonths(c.onboard, i), data.revenue).lastInsertRowid);
+        .run(customerId, addMonths(c.onboard, i * step), data.revenue).lastInsertRowid);
       for (const cat of ['Direct', 'Support', 'Others']) {
         for (const [name, w] of data[cat] || []) {
           db.prepare('INSERT INTO allocations (period_id, category, employee_id, weightage) VALUES (?, ?, ?, ?)')

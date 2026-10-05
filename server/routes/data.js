@@ -6,6 +6,14 @@ export const CATEGORIES = ['Direct', 'Support', 'Others'];
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const EPS = 1e-6;
 
+// Months per period, and how many periods a new customer starts with:
+// 12 months for Monthly, 1 year for Yearly, Year 1-3 for Three Years.
+export const FREQUENCIES = {
+  Monthly: { step: 1, count: 12 },
+  Yearly: { step: 12, count: 1 },
+  'Three Years': { step: 12, count: 3 },
+};
+
 export function addMonths(ym, n) {
   const [y, m] = ym.split('-').map(Number);
   const d = new Date(Date.UTC(y, m - 1 + n, 1));
@@ -44,7 +52,13 @@ const q = {
     INSERT INTO customers (name, onboard_month, frequency, direct_pct, support_pct, others_pct)
     VALUES (?, ?, ?, ?, ?, ?)`),
   updateCustomer: db.prepare(`
-    UPDATE customers SET name = ?, direct_pct = ?, support_pct = ?, others_pct = ? WHERE id = ?`),
+    UPDATE customers SET name = ?, frequency = ?, direct_pct = ?, support_pct = ?, others_pct = ? WHERE id = ?`),
+  customerHasData: db.prepare(`
+    SELECT EXISTS (
+      SELECT 1 FROM periods p WHERE p.customer_id = ?
+        AND (p.revenue <> 0 OR EXISTS (SELECT 1 FROM allocations a WHERE a.period_id = p.id))
+    ) AS has_data`),
+  deletePeriodsFor: db.prepare('DELETE FROM periods WHERE customer_id = ?'),
   deleteCustomer: db.prepare('DELETE FROM customers WHERE id = ?'),
 
   periodsFor: db.prepare('SELECT * FROM periods WHERE customer_id = ? ORDER BY start_month'),
@@ -100,6 +114,22 @@ function requireCustomer(id) {
   const c = q.customer.get(id);
   if (!c) throw new HttpError(404, 'Customer not found.');
   return c;
+}
+
+function parseFrequency(value) {
+  if (!Object.hasOwn(FREQUENCIES, value)) throw new HttpError(400, 'Choose Monthly, Yearly or Three Years payment.');
+  return value;
+}
+
+// The periods a customer starts with, e.g. Three Years: onboard, +12 and +24 months.
+// Periods that already exist are left alone.
+function createStartingPeriods(customerId, onboard, frequency) {
+  const { step, count } = FREQUENCIES[frequency];
+  const existing = new Set(q.periodsFor.all(customerId).map((p) => p.start_month));
+  for (let i = 0; i < count; i++) {
+    const start = addMonths(onboard, i * step);
+    if (!existing.has(start)) q.insertPeriod.run(customerId, start, 0);
+  }
 }
 
 function customerDetail(id) {
@@ -173,10 +203,9 @@ export function registerDataRoutes(router) {
   router.post('/api/customers', ({ body, setStatus }) => {
     const name = String(body.name ?? '').trim();
     const onboard = String(body.onboard_month ?? '');
-    const frequency = body.frequency;
     if (!name) throw new HttpError(400, 'Enter the customer name.');
     if (!MONTH_RE.test(onboard)) throw new HttpError(400, 'Choose the onboard month.');
-    if (!['Yearly', 'Monthly'].includes(frequency)) throw new HttpError(400, 'Choose Yearly or Monthly payment.');
+    const frequency = parseFrequency(body.frequency);
     const split = parseSplit(body);
 
     const id = transaction(() => {
@@ -187,9 +216,7 @@ export function registerDataRoutes(router) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;
       }
-      // Same as the workbook: 1 block for yearly customers, 12 monthly blocks for monthly ones.
-      const count = frequency === 'Yearly' ? 1 : 12;
-      for (let i = 0; i < count; i++) q.insertPeriod.run(customerId, addMonths(onboard, i), 0);
+      createStartingPeriods(customerId, onboard, frequency);
       return customerId;
     });
     setStatus(201);
@@ -205,12 +232,28 @@ export function registerDataRoutes(router) {
     const split = body.direct_pct === undefined
       ? { direct: current.direct_pct, support: current.support_pct, others: current.others_pct }
       : parseSplit(body);
-    try {
-      q.updateCustomer.run(name, split.direct, split.support, split.others, params.id);
-    } catch (err) {
-      if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
-      throw err;
+    const frequency = body.frequency === undefined ? current.frequency : parseFrequency(body.frequency);
+
+    // Yearly and Three Years both use 12-month periods, so switching between them keeps every
+    // period (switching to Three Years adds any missing Year 2 and Year 3). Switching to or from
+    // Monthly changes the period length, so it's only allowed before any revenue or split is entered.
+    const stepChanged = FREQUENCIES[frequency].step !== FREQUENCIES[current.frequency].step;
+    if (stepChanged && q.customerHasData.get(params.id).has_data) {
+      throw new HttpError(409, `${current.name} already has revenue or splits entered, so it can't switch between ${current.frequency} and ${frequency}. Clear them first, or add a new customer.`);
     }
+
+    transaction(() => {
+      try {
+        q.updateCustomer.run(name, frequency, split.direct, split.support, split.others, params.id);
+      } catch (err) {
+        if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
+        throw err;
+      }
+      if (frequency !== current.frequency) {
+        if (stepChanged) q.deletePeriodsFor.run(params.id);
+        createStartingPeriods(params.id, current.onboard_month, frequency);
+      }
+    });
     return customerDetail(params.id);
   });
 
@@ -223,7 +266,7 @@ export function registerDataRoutes(router) {
   router.post('/api/customers/:id/periods', ({ params, setStatus }) => {
     const customer = requireCustomer(params.id);
     const last = q.lastPeriod.get(params.id)?.start_month;
-    const next = last ? addMonths(last, customer.frequency === 'Yearly' ? 12 : 1) : customer.onboard_month;
+    const next = last ? addMonths(last, FREQUENCIES[customer.frequency].step) : customer.onboard_month;
     q.insertPeriod.run(params.id, next, 0);
     setStatus(201);
     return customerDetail(params.id);

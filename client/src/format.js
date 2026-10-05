@@ -15,8 +15,12 @@ export const addMonths = (ym, n) => {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 };
 
+// Yearly and Three Years customers both have one period per year; Monthly ones one per month.
+export const isYearly = (frequency) => frequency === 'Yearly' || frequency === 'Three Years';
+export const periodStep = (frequency) => (isYearly(frequency) ? 12 : 1);
+
 export const periodLabel = (ym, frequency) =>
-  frequency === 'Yearly' ? `${monthLabel(ym)} to ${monthLabel(addMonths(ym, 11))}` : monthLabel(ym);
+  isYearly(frequency) ? `${monthLabel(ym)} to ${monthLabel(addMonths(ym, 11))}` : monthLabel(ym);
 
 // 0.142857 -> '14.29%'
 export const pct = (fraction) => `${+(fraction * 100).toFixed(2)}%`;
