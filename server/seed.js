@@ -42,8 +42,9 @@ transaction(() => {
   for (const c of CUSTOMERS) {
     const customerId = Number(db.prepare('INSERT INTO customers (name, onboard_month, frequency) VALUES (?, ?, ?)')
       .run(c.name, c.onboard, c.frequency).lastInsertRowid);
-    const { step, count } = FREQUENCIES[c.frequency];
-    // One "Onboarding" share covering the starting periods.
+    const { step } = FREQUENCIES[c.frequency];
+    // One "Onboarding" share: 12 months for Monthly, the one-time payment for Yearly.
+    const count = c.frequency === 'Monthly' ? 12 : 1;
     db.prepare(`
       INSERT INTO shares (customer_id, name, from_month, to_month, direct_pct, support_pct, others_pct)
       VALUES (?, 'Onboarding', ?, ?, ?, ?, ?)`)

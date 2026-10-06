@@ -3,7 +3,8 @@ import { addMonths, monthLabel, parseNum, periodMonths } from '../format.js';
 // Revenue shares: the Direct/Support/Others split for a range of months. The first share is
 // always "Onboarding" and starts in the onboard month: Monthly runs to a To month you choose
 // (12 months by default); Yearly and Three Years is the one-time onboarding payment. Share types
-// added after it (Renewal, ...) have From and To months for every payment type.
+// added after it (Renewal, ...) have From and To months for every payment type. The customer's
+// periods are the payments inside its shares.
 let nextKey = 1;
 const pctText = (fraction) => String(+(fraction * 100).toFixed(4));
 
@@ -38,12 +39,22 @@ export const sharesForApi = (shares) => shares.map((s) => ({
   others_pct: parseNum(s.others) / 100,
 }));
 
-// 'Oct 2026 to Sep 2027', 'Oct 2026 onwards', or 'Oct 2026 (one-time payment)' for a
-// Yearly or Three Years onboarding share.
+// 'Oct 2026 to Sep 2027', or 'Oct 2026 (one-time payment)' for a Yearly or Three Years
+// onboarding share.
 export const shareMonths = (share, frequency) => {
   if (frequency !== 'Monthly' && share.from_month === share.to_month) return `${monthLabel(share.from_month)} (one-time payment)`;
-  return share.to_month ? `${monthLabel(share.from_month)} to ${monthLabel(share.to_month)}` : `${monthLabel(share.from_month)} onwards`;
+  return `${monthLabel(share.from_month)} to ${monthLabel(share.to_month)}`;
 };
+
+// How many payments a share creates: every month for Monthly, every 12 or 36 months from the
+// From month for Yearly and Three Years (the same rule as the server).
+const paymentCount = (share, frequency) => {
+  if (!share.from_month || !share.to_month || share.to_month < share.from_month) return 0;
+  const [y1, m1] = share.from_month.split('-').map(Number);
+  const [y2, m2] = share.to_month.split('-').map(Number);
+  return Math.floor(((y2 - y1) * 12 + (m2 - m1)) / periodMonths(frequency)) + 1;
+};
+const PAYMENT_WORD = { Monthly: 'monthly payment', Yearly: 'yearly payment', 'Three Years': '3-year payment' };
 
 const ONBOARDING_NOTE = {
   Yearly: 'One-time share for the onboarding payment (12 months).',
@@ -58,7 +69,7 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
   const remove = (key) => onChange(shares.filter((s) => s.key !== key));
 
   // A new share starts right after the latest one (12 months, or one payment for Yearly and
-  // Three Years) and copies its percentages. An ongoing latest share is given an end first.
+  // Three Years) and copies its percentages. A latest share with no To month is given one first.
   const add = () => {
     const last = shares.reduce((a, s) => (s.from_month > a.from_month ? s : a), shares[0]);
     const lastTo = last.to_month || addMonths(last.from_month, span - 1);
@@ -106,15 +117,17 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
                   </label>
                   <label>
                     <span>To</span>
-                    <input type="month" value={s.to_month} onChange={(e) => update(s.key, { to_month: e.target.value })} />
+                    <input type="month" value={s.to_month} min={s.from_month} required
+                      onChange={(e) => update(s.key, { to_month: e.target.value })} />
                   </label>
                 </>
               )}
             </div>
             <p className="muted small">
-              {oneTime
-                ? ONBOARDING_NOTE[frequency]
-                : `${shareMonths(s, frequency)}.${first ? ' Starts in the onboard month.' : ''} Leave To empty to keep this share going.`}
+              {oneTime ? ONBOARDING_NOTE[frequency] : (() => {
+                const n = paymentCount(s, frequency);
+                return `${n} ${PAYMENT_WORD[frequency]}${n === 1 ? '' : 's'}${first ? ', starting in the onboard month' : ''}.`;
+              })()}
             </p>
             <div className="row">
               {[['direct', 'Direct'], ['support', 'Support'], ['others', 'Others']].map(([k, label]) => (

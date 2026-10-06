@@ -84,14 +84,6 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     }
   };
 
-  const removePeriod = async () => {
-    if (!window.confirm(`Delete the ${label} period and its split?`)) return;
-    try {
-      const updated = await api.periods.remove(period.id);
-      setDirty(false);
-      onSaved(updated);
-    } catch (err) { setError(err.message); }
-  };
 
   const totalPaid = CATEGORIES.reduce((s, c) => s + stats[c].paid, 0);
   const wording = {
@@ -112,7 +104,8 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
             <p className="muted small">Uses the <strong>{share.name}</strong> revenue share.</p>
           ) : (
             <p className="warn-text small">
-              No revenue share covers {label}, so pay is ₹0. Add a share type for it in Edit customer.
+              No revenue share covers {label}, so pay is ₹0. Add a share type for it in Edit customer,
+              or clear its revenue and split so it's removed the next time the shares are saved.
             </p>
           )}
         </div>
@@ -154,9 +147,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
           {dirty && <button className="secondary" onClick={discard}>Discard changes</button>}
           {prev && prev.allocations.length > 0 && (
             <button className="secondary" onClick={copyPrevious}>Copy contributors from {monthLabel(prev.start_month)}</button>
-          )}
-          <button className="danger-link" onClick={removePeriod}>Delete period</button>
-        </div>
+          )}        </div>
       </div>
     </div>
   );

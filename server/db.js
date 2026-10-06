@@ -51,14 +51,15 @@ db.exec(`
 
   -- Revenue shares: the Direct/Support/Others split for a range of months. The first one is
   -- "Onboarding"; more can be added (e.g. "Renewal"). A period uses the share covering its
-  -- start month. to_month NULL means ongoing. For Yearly and Three Years the Onboarding share is
-  -- the one-time onboarding payment (from_month = to_month). Percentages are fractions (0.7 = 70%).
+  -- start month, and the customer's periods are the payments inside its shares. For Yearly and
+  -- Three Years the Onboarding share is the one-time onboarding payment (from_month = to_month).
+  -- Percentages are fractions (0.7 = 70%).
   CREATE TABLE IF NOT EXISTS shares (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
     from_month  TEXT NOT NULL,                    -- 'YYYY-MM'
-    to_month    TEXT,                             -- 'YYYY-MM', or NULL for ongoing
+    to_month    TEXT,                             -- 'YYYY-MM' (NULL only in old data, filled in below)
     direct_pct  REAL NOT NULL,
     support_pct REAL NOT NULL,
     others_pct  REAL NOT NULL
@@ -154,6 +155,16 @@ if (customerColumns.has('direct_pct')) {
     ALTER TABLE customers DROP COLUMN others_pct;
   `));
 }
+
+// Every share now has a To month (the customer's periods are the payments inside its shares).
+// Shares saved as ongoing end at the last period they already cover, or after 12 months.
+db.exec(`
+  UPDATE shares SET to_month = COALESCE(
+    (SELECT MAX(p.start_month) FROM periods p
+      WHERE p.customer_id = shares.customer_id AND p.start_month >= shares.from_month),
+    substr(date(from_month || '-01', '+11 months'), 1, 7))
+  WHERE to_month IS NULL;
+`);
 
 db.exec(`
   -- Pay is never stored: it is always Revenue x Category % x Weightage %

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, periodLabel, pct, money, addMonths, periodMonths } from '../format.js';
+import { monthLabel, periodLabel, pct, money, periodMonths } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { FrequencyChoice } from './CustomersPage.jsx';
@@ -50,16 +50,6 @@ export default function CustomerDetail({ id }) {
     setSelectedId(pid);
   };
 
-  const addPeriod = async () => {
-    if (dirty && !window.confirm('You have unsaved changes in this period. Discard them?')) return;
-    try {
-      const c = await api.customers.addPeriod(customer.id);
-      setCustomer(c);
-      setDirty(false);
-      setSelectedId(c.periods.at(-1).id);
-    } catch (e) { setError(e.message); }
-  };
-
   const deleteCustomer = async () => {
     if (!window.confirm(`Delete ${customer.name} and all of its periods and splits? This can't be undone.`)) return;
     try {
@@ -68,9 +58,16 @@ export default function CustomerDetail({ id }) {
     } catch (e) { setError(e.message); }
   };
 
-  const nextStart = periods.length
-    ? monthLabel(addMonths(periods.at(-1).start_month, periodMonths(customer.frequency)))
-    : monthLabel(customer.onboard_month);
+  // Periods grouped by the revenue share that covers them. Periods outside every share (only
+  // possible for old data with revenue) get their own group.
+  const groups = customer.shares.map((s) => ({
+    key: s.id, name: s.name, months: shareMonths(s, customer.frequency),
+    periods: periods.filter((p) => p.share?.id === s.id),
+  }));
+  const loose = periods.filter((p) => !p.share);
+  if (loose.length) groups.push({ key: 'none', name: 'No revenue share', months: 'Not covered by any share', periods: loose });
+  const activeGroup = groups.find((g) => g.periods.some((p) => p.id === selectedId));
+  const unit = periodMonths(customer.frequency) > 1 ? 'Years' : 'Months';
 
   return (
     <section>
@@ -99,23 +96,41 @@ export default function CustomerDetail({ id }) {
           onSaved={(c) => {
             setCustomer(c);
             setEditing(false);
-            // Changing the frequency replaces the periods.
+            // Changing the shares or frequency can add and remove periods.
             if (!c.periods.some((p) => p.id === selectedId)) { setDirty(false); setSelectedId(c.periods[0]?.id ?? null); }
           }} onDelete={deleteCustomer} />
       )}
 
       <div className="periods-bar">
-        <h2 id="periods-label">{periodMonths(customer.frequency) > 1 ? 'Years' : 'Months'}</h2>
-        <div className="period-tabs" role="tablist" aria-labelledby="periods-label">
-          {periods.map((p) => (
-            <button key={p.id} role="tab" aria-selected={p.id === selectedId}
-              className={`period-tab ${p.revenue > 0 ? 'has-revenue' : ''}`} onClick={() => choosePeriod(p.id)}>
-              <span>{periodLabel(p.start_month, customer.frequency)}</span>
-              <small>{p.revenue > 0 ? money(p.revenue) : 'No revenue'}</small>
-            </button>
-          ))}
-          <button className="period-add" onClick={addPeriod} title={`Adds ${nextStart}`}>Add {nextStart}</button>
+        <h2 id="shares-label">Share types</h2>
+        <div className="period-tabs" role="tablist" aria-labelledby="shares-label">
+          {groups.map((g) => {
+            const revenue = g.periods.reduce((s, p) => s + p.revenue, 0);
+            return (
+              <button key={g.key} role="tab" aria-selected={g === activeGroup} disabled={!g.periods.length}
+                className={`period-tab ${revenue > 0 ? 'has-revenue' : ''}`} onClick={() => g.periods[0] && choosePeriod(g.periods[0].id)}>
+                <span>{g.name}</span>
+                <small>{g.months}</small>
+                <small>{revenue > 0 ? money(revenue) : 'No revenue'}</small>
+              </button>
+            );
+          })}
         </div>
+
+        {activeGroup && activeGroup.periods.length > 1 && (
+          <>
+            <h3 id="periods-label">{activeGroup.name}: {unit.toLowerCase()}</h3>
+            <div className="period-tabs" role="tablist" aria-labelledby="periods-label">
+              {activeGroup.periods.map((p) => (
+                <button key={p.id} role="tab" aria-selected={p.id === selectedId}
+                  className={`period-tab ${p.revenue > 0 ? 'has-revenue' : ''}`} onClick={() => choosePeriod(p.id)}>
+                  <span>{periodLabel(p.start_month, customer.frequency)}</span>
+                  <small>{p.revenue > 0 ? money(p.revenue) : 'No revenue'}</small>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {period ? (
@@ -126,13 +141,10 @@ export default function CustomerDetail({ id }) {
           prev={prev}
           employees={employees}
           onDirtyChange={setDirty}
-          onSaved={(c) => {
-            setCustomer(c);
-            if (!c.periods.some((p) => p.id === selectedId)) setSelectedId(c.periods[Math.max(0, index - 1)]?.id ?? null);
-          }}
+          onSaved={setCustomer}
         />
       ) : (
-        <div className="empty"><p>This customer has no periods. Add one to enter revenue.</p></div>
+        <div className="empty"><p>This customer has no periods. Add a revenue share in Edit customer to create them.</p></div>
       )}
     </section>
   );
@@ -176,8 +188,9 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
       <FrequencyChoice value={frequency} onChange={changeFrequency} />
       <RevenueShares shares={shares} onChange={setShares} onboard={customer.onboard_month} frequency={frequency} />
       <p className="muted small">
-        Changing a revenue share recalculates pay for the periods it covers.
-        The payment frequency can only be changed before any revenue or split is entered.
+        Changing a revenue share recalculates pay for the periods it covers. Its payments appear
+        under Share types; payments no share covers any more are removed (unless revenue or a split
+        has been entered). The payment frequency can only be changed before any revenue or split is entered.
         The onboard month can't be changed after the customer is created.
       </p>
       <div className="actions">

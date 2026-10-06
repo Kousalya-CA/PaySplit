@@ -6,13 +6,13 @@ export const CATEGORIES = ['Direct', 'Support', 'Others'];
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const EPS = 1e-6;
 
-// Months per period, and how many periods a new customer starts with:
-// 12 months for Monthly, one 12-month period for Yearly, one 36-month period for Three Years.
+// Months per period: a month for Monthly, 12 for Yearly, 36 for Three Years.
 export const FREQUENCIES = {
-  Monthly: { step: 1, count: 12 },
-  Yearly: { step: 12, count: 1 },
-  'Three Years': { step: 36, count: 1 },
+  Monthly: { step: 1 },
+  Yearly: { step: 12 },
+  'Three Years': { step: 36 },
 };
+const MAX_PERIODS = 600;
 
 export function addMonths(ym, n) {
   const [y, m] = ym.split('-').map(Number);
@@ -67,10 +67,12 @@ const q = {
 
   periodsFor: db.prepare('SELECT * FROM periods WHERE customer_id = ? ORDER BY start_month'),
   period: db.prepare('SELECT * FROM periods WHERE id = ?'),
-  lastPeriod: db.prepare('SELECT start_month FROM periods WHERE customer_id = ? ORDER BY start_month DESC LIMIT 1'),
   insertPeriod: db.prepare('INSERT INTO periods (customer_id, start_month, revenue) VALUES (?, ?, ?)'),
   updatePeriod: db.prepare('UPDATE periods SET revenue = ? WHERE id = ?'),
   deletePeriod: db.prepare('DELETE FROM periods WHERE id = ?'),
+  periodHasData: db.prepare(`
+    SELECT p.revenue <> 0 OR EXISTS (SELECT 1 FROM allocations a WHERE a.period_id = p.id) AS has_data
+    FROM periods p WHERE p.id = ?`),
 
   allocationsForCustomer: db.prepare(`
     SELECT a.id, a.period_id, a.category, a.employee_id, e.name AS employee, e.active, a.weightage
@@ -119,8 +121,8 @@ function parseSplit(src, name) {
 
 // Revenue shares. The first is always "Onboarding" and starts in the onboard month: for Monthly
 // it runs to a To month you choose; for Yearly and Three Years it's the one-time onboarding payment
-// (To = From). Every share added after it (Renewal, ...) has From and To months, where no To month
-// means ongoing. A period uses the share covering its start month, so shares can't overlap.
+// (To = From). Every share added after it (Renewal, ...) has From and To months. The customer's
+// periods are the payments inside its shares, so shares can't overlap.
 function parseShares(list, onboard, frequency) {
   if (!Array.isArray(list) || list.length === 0) throw new HttpError(400, 'Add at least one revenue share.');
   const oneTimeOnboarding = frequency !== 'Monthly';
@@ -132,9 +134,9 @@ function parseShares(list, onboard, frequency) {
     if (from < onboard) throw new HttpError(400, `${name} starts before the onboard month (${monthLabel(onboard)}).`);
     let to = from;
     if (!(i === 0 && oneTimeOnboarding)) {
-      to = s.to_month ? String(s.to_month) : null;
-      if (to !== null && !MONTH_RE.test(to)) throw new HttpError(400, `${name}: the To month isn't a valid month.`);
-      if (to !== null && to < from) throw new HttpError(400, `${name}: the To month is before the From month.`);
+      to = String(s.to_month ?? '');
+      if (!MONTH_RE.test(to)) throw new HttpError(400, `${name}: choose the To month.`);
+      if (to < from) throw new HttpError(400, `${name}: the To month is before the From month.`);
     }
     return { name, from, to, ...parseSplit(s, name) };
   }).sort((a, b) => a.from.localeCompare(b.from));
@@ -142,19 +144,61 @@ function parseShares(list, onboard, frequency) {
   for (let i = 1; i < shares.length; i++) {
     const a = shares[i - 1];
     const b = shares[i];
-    if (a.to === null || a.to >= b.from) {
-      throw new HttpError(400, a.to === null
-        ? `${a.name} has no To month, so it overlaps ${b.name}. Give ${a.name} a To month before ${monthLabel(b.from)}.`
-        : `${a.name} (to ${monthLabel(a.to)}) overlaps ${b.name} (from ${monthLabel(b.from)}). Each month can only have one revenue share.`);
+    if (a.to >= b.from) {
+      throw new HttpError(400, `${a.name} (to ${monthLabel(a.to)}) overlaps ${b.name} (from ${monthLabel(b.from)}). Each month can only have one revenue share.`);
     }
   }
+  const total = shares.reduce((n, s) => n + periodMonthsIn(s.from, s.to, frequency).length, 0);
+  if (total > MAX_PERIODS) throw new HttpError(400, `These shares cover ${total} payments. Keep it to ${MAX_PERIODS} or fewer.`);
   return shares;
 }
 
-function saveShares(customerId, shares) {
+// The payment periods inside one share: every month for Monthly, every 12 or 36 months from the
+// share's From month for Yearly and Three Years.
+function periodMonthsIn(from, to, frequency) {
+  const months = [];
+  for (let m = from; m <= to; m = addMonths(m, FREQUENCIES[frequency].step)) months.push(m);
+  return months;
+}
+
+// Save the shares and make the customer's periods match them: add the missing payments and remove
+// the ones no share covers any more. A period with revenue or a split is never removed.
+function saveShares(customerId, shares, frequency) {
+  const wanted = new Set(shares.flatMap((s) => periodMonthsIn(s.from, s.to, frequency)));
+  const existing = q.periodsFor.all(customerId);
+  for (const p of existing) {
+    if (wanted.has(p.start_month)) continue;
+    if (q.periodHasData.get(p.id).has_data) {
+      throw new HttpError(409, `${periodLabelFor(p.start_month, frequency)} already has revenue or a split, so it has to stay inside a revenue share. Change the share months, or clear that period first.`);
+    }
+    q.deletePeriod.run(p.id);
+  }
+  const have = new Set(existing.map((p) => p.start_month));
+  for (const m of [...wanted].sort()) if (!have.has(m)) q.insertPeriod.run(customerId, m, 0);
+
   q.deleteSharesFor.run(customerId);
   for (const s of shares) q.insertShare.run(customerId, s.name, s.from, s.to, s.direct, s.support, s.others);
 }
+
+// Data from before periods followed shares: add each customer's missing share payments and remove
+// empty periods that no share covers. Periods with revenue or a split are kept.
+transaction(() => {
+  for (const c of db.prepare('SELECT id, frequency FROM customers').all()) {
+    const shares = q.sharesFor.all(c.id);
+    const wanted = new Set(shares.flatMap((s) => periodMonthsIn(s.from_month, s.to_month, c.frequency)));
+    const existing = q.periodsFor.all(c.id);
+    for (const p of existing) {
+      if (!wanted.has(p.start_month) && !q.periodHasData.get(p.id).has_data) q.deletePeriod.run(p.id);
+    }
+    const have = new Set(existing.map((p) => p.start_month));
+    for (const m of wanted) if (!have.has(m)) q.insertPeriod.run(c.id, m, 0);
+  }
+});
+
+const periodLabelFor = (ym, frequency) => {
+  const step = FREQUENCIES[frequency].step;
+  return step === 1 ? monthLabel(ym) : `${monthLabel(ym)} to ${monthLabel(addMonths(ym, step - 1))}`;
+};
 
 // The share whose months cover a period, or null.
 const shareFor = (shares, month) =>
@@ -169,12 +213,6 @@ function requireCustomer(id) {
 function parseFrequency(value) {
   if (!Object.hasOwn(FREQUENCIES, value)) throw new HttpError(400, 'Choose Monthly, Yearly or Three Years payment.');
   return value;
-}
-
-// The periods a new customer starts with (same as the workbook for Monthly and Yearly).
-function createStartingPeriods(customerId, onboard, frequency) {
-  const { step, count } = FREQUENCIES[frequency];
-  for (let i = 0; i < count; i++) q.insertPeriod.run(customerId, addMonths(onboard, i * step), 0);
 }
 
 function customerDetail(id) {
@@ -268,8 +306,7 @@ export function registerDataRoutes(router) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;
       }
-      saveShares(customerId, shares);
-      createStartingPeriods(customerId, onboard, frequency);
+      saveShares(customerId, shares, frequency);
       return customerId;
     });
     setStatus(201);
@@ -302,11 +339,8 @@ export function registerDataRoutes(router) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;
       }
-      if (shares) saveShares(params.id, shares);
-      if (frequencyChanged) {
-        q.deletePeriodsFor.run(params.id);
-        createStartingPeriods(params.id, current.onboard_month, frequency);
-      }
+      if (frequencyChanged) q.deletePeriodsFor.run(params.id);
+      if (shares) saveShares(params.id, shares, frequency);
     });
     return customerDetail(params.id);
   });
@@ -316,16 +350,7 @@ export function registerDataRoutes(router) {
     q.deleteCustomer.run(params.id);
   });
 
-  // Periods
-  router.post('/api/customers/:id/periods', ({ params, setStatus }) => {
-    const customer = requireCustomer(params.id);
-    const last = q.lastPeriod.get(params.id)?.start_month;
-    const next = last ? addMonths(last, FREQUENCIES[customer.frequency].step) : customer.onboard_month;
-    q.insertPeriod.run(params.id, next, 0);
-    setStatus(201);
-    return customerDetail(params.id);
-  });
-
+  // Periods are created and removed by the customer's revenue shares (saveShares).
   // Save a period: revenue plus the full list of contributors (replaces the old list).
   router.put('/api/periods/:id', ({ params, body }) => {
     const period = q.period.get(params.id);
@@ -360,13 +385,6 @@ export function registerDataRoutes(router) {
       q.clearAllocations.run(params.id);
       for (const r of rows) q.insertAllocation.run(params.id, r.category, r.employee_id, r.weightage);
     });
-    return customerDetail(period.customer_id);
-  });
-
-  router.delete('/api/periods/:id', ({ params }) => {
-    const period = q.period.get(params.id);
-    if (!period) throw new HttpError(404, 'Period not found.');
-    q.deletePeriod.run(params.id);
     return customerDetail(period.customer_id);
   });
 

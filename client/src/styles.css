@@ -257,8 +257,8 @@ tr.inactive th, tr.inactive td { color: var(--muted); }
 .period-tab.has-revenue { border-left: 5px solid var(--green); }
 .period-tab[aria-selected="true"] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
 .period-tab[aria-selected="true"] small { color: var(--lilac); }
-.period-add { flex: none; border: 2px dashed var(--line); background: none; color: var(--muted); font-weight: 700; border-radius: .6rem; padding: .5rem .9rem; }
-.period-add:hover { border-color: var(--ink); color: var(--ink); }
+.periods-bar h3 { margin: .9rem 0 .5rem; font-size: 1rem; }
+.period-tab:disabled { opacity: .55; cursor: not-allowed; }
 
 .period { background: var(--surface); border: 2px solid var(--line); border-radius: 1rem; padding: 1.5rem; margin-top: 1rem; }
 .period-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1.5rem; flex-wrap: wrap; }

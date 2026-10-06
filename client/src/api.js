@@ -48,11 +48,9 @@ export const api = {
     create: (body) => request('/customers', { method: 'POST', body }),
     update: (id, body) => request(`/customers/${id}`, { method: 'PATCH', body }),
     remove: (id) => request(`/customers/${id}`, { method: 'DELETE' }),
-    addPeriod: (id) => request(`/customers/${id}/periods`, { method: 'POST' }),
   },
   periods: {
     save: (id, body) => request(`/periods/${id}`, { method: 'PUT', body }),
-    remove: (id) => request(`/periods/${id}`, { method: 'DELETE' }),
   },
   payments: () => request('/payments'),
   summary: () => request('/summary'),
