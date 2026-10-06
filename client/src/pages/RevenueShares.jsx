@@ -32,6 +32,29 @@ export const sharesFromCustomer = (customer) => customer.shares.map((s) => ({
 export const relayoutShares = (shares, onboard, frequency) =>
   shares.map((s, i) => ({ ...s, ...monthsAt(i, onboard, frequency) }));
 
+const monthsBetween = (a, b) => {
+  const [y1, m1] = a.split('-').map(Number);
+  const [y2, m2] = b.split('-').map(Number);
+  return (y2 - y1) * 12 + (m2 - m1);
+};
+
+// When an existing customer's onboard month moves, move only the Onboarding share with it:
+// Monthly keeps its length; Yearly and Three Years cover the 12 or 36 months from the new month
+// and the payment month shifts by the same amount. Other shares keep their months.
+export const moveOnboarding = (shares, oldOnboard, newOnboard, frequency) => {
+  const shift = monthsBetween(oldOnboard, newOnboard);
+  return shares.map((s, i) => {
+    if (i !== 0) return s;
+    if (frequency === 'Monthly') {
+      return { ...s, from_month: newOnboard, to_month: s.to_month ? addMonths(s.to_month, shift) : '' };
+    }
+    const to = addMonths(newOnboard, spanFor(frequency) - 1);
+    let payment = addMonths(s.payment_month || s.from_month, shift);
+    if (payment < newOnboard || payment > to) payment = newOnboard;
+    return { ...s, from_month: newOnboard, to_month: to, payment_month: payment };
+  });
+};
+
 export const sharesForApi = (shares) => shares.map((s) => ({
   name: s.name,
   from_month: s.from_month,

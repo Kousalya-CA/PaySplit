@@ -49,7 +49,7 @@ const q = {
     FROM customers c ORDER BY c.name`),
   customer: db.prepare('SELECT * FROM customers WHERE id = ?'),
   insertCustomer: db.prepare('INSERT INTO customers (name, onboard_month, frequency) VALUES (?, ?, ?)'),
-  updateCustomer: db.prepare('UPDATE customers SET name = ?, frequency = ? WHERE id = ?'),
+  updateCustomer: db.prepare('UPDATE customers SET name = ?, onboard_month = ?, frequency = ? WHERE id = ?'),
 
   allShares: db.prepare('SELECT * FROM shares ORDER BY customer_id, from_month'),
   sharesFor: db.prepare('SELECT * FROM shares WHERE customer_id = ? ORDER BY from_month'),
@@ -172,17 +172,21 @@ function paymentMonths(share, frequency) {
 }
 
 // Make a customer's periods match its shares. For Yearly and Three Years a share has one payment,
-// so a payment whose month changed inside its share is moved (keeping its revenue and split).
+// so when its month changes the payment is moved (keeping its revenue and split): the payment
+// already inside the share's months, or the one the same-named share had before (oldShares).
 // Missing payments are added and empty ones no share wants are removed. A payment with revenue
 // or a split is never removed: with strict it's an error, otherwise it's left alone.
-function syncPeriods(customerId, shares, frequency, strict) {
+function syncPeriods(customerId, shares, frequency, strict, oldShares = []) {
   const existing = q.periodsFor.all(customerId);
   const wanted = new Set(shares.flatMap((s) => paymentMonths(s, frequency)));
   if (frequency !== 'Monthly') {
     for (const s of shares) {
       const month = paymentMonths(s, frequency)[0];
       if (existing.some((p) => p.start_month === month)) continue;
-      const inside = existing.find((p) => !wanted.has(p.start_month) && p.start_month >= s.from_month && p.start_month <= s.to_month);
+      const before = oldShares.find((o) => o.name === s.name);
+      const beforeMonth = before && (before.payment_month || before.from_month);
+      const inside = existing.find((p) => !wanted.has(p.start_month)
+        && ((p.start_month >= s.from_month && p.start_month <= s.to_month) || p.start_month === beforeMonth));
       if (inside) {
         q.movePeriod.run(month, inside.id);
         inside.start_month = month;
@@ -201,7 +205,7 @@ function syncPeriods(customerId, shares, frequency, strict) {
 }
 
 function saveShares(customerId, shares, frequency) {
-  syncPeriods(customerId, shares, frequency, true);
+  syncPeriods(customerId, shares, frequency, true, q.sharesFor.all(customerId));
   q.deleteSharesFor.run(customerId);
   for (const s of shares) {
     q.insertShare.run(customerId, s.name, s.from_month, s.to_month, s.payment_month, s.direct, s.support, s.others);
@@ -341,10 +345,13 @@ export function registerDataRoutes(router) {
     const name = body.name === undefined ? current.name : String(body.name).trim();
     if (!name) throw new HttpError(400, 'Enter the customer name.');
     const frequency = body.frequency === undefined ? current.frequency : parseFrequency(body.frequency);
-    if (frequency !== current.frequency && body.shares === undefined) {
-      throw new HttpError(400, 'Send the revenue shares when changing the payment frequency.');
+    const onboard = body.onboard_month === undefined ? current.onboard_month : String(body.onboard_month);
+    if (!MONTH_RE.test(onboard)) throw new HttpError(400, 'Choose the onboard month.');
+    // The Onboarding share starts in the onboard month, so moving either needs the shares too.
+    if ((frequency !== current.frequency || onboard !== current.onboard_month) && body.shares === undefined) {
+      throw new HttpError(400, 'Send the revenue shares when changing the onboard month or payment frequency.');
     }
-    const shares = body.shares === undefined ? null : parseShares(body.shares, current.onboard_month, frequency);
+    const shares = body.shares === undefined ? null : parseShares(body.shares, onboard, frequency);
 
     // Each frequency has a different period length (1, 12 or 36 months), so switching replaces the
     // periods. That's only allowed before any revenue or split is entered.
@@ -355,7 +362,7 @@ export function registerDataRoutes(router) {
 
     transaction(() => {
       try {
-        q.updateCustomer.run(name, frequency, params.id);
+        q.updateCustomer.run(name, onboard, frequency, params.id);
       } catch (err) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;

@@ -4,7 +4,7 @@ import { monthLabel, periodLabel, pct, money, periodMonths } from '../format.js'
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { FrequencyChoice } from './CustomersPage.jsx';
-import RevenueShares, { sharesFromCustomer, relayoutShares, sharesForApi, shareMonths } from './RevenueShares.jsx';
+import RevenueShares, { sharesFromCustomer, relayoutShares, moveOnboarding, sharesForApi, shareMonths } from './RevenueShares.jsx';
 import PeriodEditor from './PeriodEditor.jsx';
 
 export default function CustomerDetail({ id }) {
@@ -152,11 +152,16 @@ export default function CustomerDetail({ id }) {
 
 function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
   const [name, setName] = useState(customer.name);
+  const [onboard, setOnboard] = useState(customer.onboard_month);
   const [frequency, setFrequency] = useState(customer.frequency);
   const [shares, setShares] = useState(() => sharesFromCustomer(customer));
   const changeFrequency = (f) => {
     setFrequency(f);
-    setShares(relayoutShares(shares, customer.onboard_month, f));
+    setShares(relayoutShares(shares, onboard, f));
+  };
+  const changeOnboard = (month) => {
+    setOnboard(month);
+    if (month) setShares(moveOnboarding(shares, onboard || month, month, frequency));
   };
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -168,6 +173,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
     try {
       onSaved(await api.customers.update(customer.id, {
         name,
+        onboard_month: onboard,
         frequency,
         shares: sharesForApi(shares),
       }));
@@ -181,17 +187,23 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
     <form className="panel" onSubmit={submit}>
       <h2>Edit customer</h2>
       <ErrorNote>{error}</ErrorNote>
-      <label>
-        <span>Customer name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} required />
-      </label>
+      <div className="row">
+        <label className="grow">
+          <span>Customer name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} required />
+        </label>
+        <label>
+          <span>Onboard month</span>
+          <input type="month" value={onboard} onChange={(e) => changeOnboard(e.target.value)} required />
+        </label>
+      </div>
       <FrequencyChoice value={frequency} onChange={changeFrequency} />
-      <RevenueShares shares={shares} onChange={setShares} onboard={customer.onboard_month} frequency={frequency} />
+      {onboard && <RevenueShares shares={shares} onChange={setShares} onboard={onboard} frequency={frequency} />}
       <p className="muted small">
         Changing a revenue share recalculates pay for the periods it covers. Its payments appear
         under Share types; payments no share covers any more are removed (unless revenue or a split
-        has been entered). The payment frequency can only be changed before any revenue or split is entered.
-        The onboard month can't be changed after the customer is created.
+        has been entered). Changing the onboard month moves the Onboarding share with it.
+        The payment frequency can only be changed before any revenue or split is entered.
       </p>
       <div className="actions">
         <button className="primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
