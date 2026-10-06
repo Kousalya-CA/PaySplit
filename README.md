@@ -108,7 +108,7 @@ users                    id, name, email, role (admin/employee), is_owner, last_
 sessions                 login sessions
 employees                id, name, active
 customers                id, name, onboard_month, frequency
-shares                   id, customer_id, name, from_month, to_month, direct_pct, support_pct, others_pct
+shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct
 periods                  id, customer_id, start_month, revenue
 allocations              id, period_id, category, employee_id, weightage
 payments (view)          every allocation with pay = revenue × category % × weightage

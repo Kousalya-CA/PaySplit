@@ -51,15 +51,16 @@ db.exec(`
 
   -- Revenue shares: the Direct/Support/Others split for a range of months. The first one is
   -- "Onboarding"; more can be added (e.g. "Renewal"). A period uses the share covering its
-  -- start month, and the customer's periods are the payments inside its shares. For Yearly and
-  -- Three Years the Onboarding share is the one-time onboarding payment (from_month = to_month).
-  -- Percentages are fractions (0.7 = 70%).
+  -- start month, and the customer's periods are the payments inside its shares: every month for
+  -- Monthly, one payment per share for Yearly and Three Years (the Onboarding share there is the
+  -- first 12 or 36 months). Percentages are fractions (0.7 = 70%).
   CREATE TABLE IF NOT EXISTS shares (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
     from_month  TEXT NOT NULL,                    -- 'YYYY-MM'
     to_month    TEXT,                             -- 'YYYY-MM' (NULL only in old data, filled in below)
+    payment_month TEXT,                           -- Yearly / Three Years onboarding: month it's paid
     direct_pct  REAL NOT NULL,
     support_pct REAL NOT NULL,
     others_pct  REAL NOT NULL
@@ -156,6 +157,11 @@ if (customerColumns.has('direct_pct')) {
   `));
 }
 
+// Yearly / Three Years onboarding is paid once, in a month chosen inside the share
+// (payment_month). NULL means the From month.
+const shareColumns = new Set(db.prepare('PRAGMA table_info(shares)').all().map((c) => c.name));
+if (!shareColumns.has('payment_month')) db.exec('ALTER TABLE shares ADD COLUMN payment_month TEXT');
+
 // Every share now has a To month (the customer's periods are the payments inside its shares).
 // Shares saved as ongoing end at the last period they already cover, or after 12 months.
 db.exec(`
@@ -164,6 +170,23 @@ db.exec(`
       WHERE p.customer_id = shares.customer_id AND p.start_month >= shares.from_month),
     substr(date(from_month || '-01', '+11 months'), 1, 7))
   WHERE to_month IS NULL;
+`);
+
+// Yearly and Three Years onboarding shares used to be saved as just the onboard month. They're
+// the one-time payment for the first 12 or 36 months, so store those months, stopping before the
+// next share if one starts sooner.
+db.exec(`
+  UPDATE shares SET to_month = MIN(
+    substr(date(from_month || '-01',
+      CASE (SELECT frequency FROM customers c WHERE c.id = shares.customer_id)
+        WHEN 'Three Years' THEN '+35 months' ELSE '+11 months' END), 1, 7),
+    COALESCE(
+      (SELECT substr(date(MIN(s2.from_month) || '-01', '-1 months'), 1, 7) FROM shares s2
+        WHERE s2.customer_id = shares.customer_id AND s2.from_month > shares.from_month),
+      '9999-12'))
+  WHERE to_month = from_month
+    AND from_month = (SELECT onboard_month FROM customers c WHERE c.id = shares.customer_id)
+    AND (SELECT frequency FROM customers c WHERE c.id = shares.customer_id) <> 'Monthly';
 `);
 
 db.exec(`

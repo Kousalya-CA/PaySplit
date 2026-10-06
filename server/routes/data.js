@@ -55,8 +55,9 @@ const q = {
   sharesFor: db.prepare('SELECT * FROM shares WHERE customer_id = ? ORDER BY from_month'),
   deleteSharesFor: db.prepare('DELETE FROM shares WHERE customer_id = ?'),
   insertShare: db.prepare(`
-    INSERT INTO shares (customer_id, name, from_month, to_month, direct_pct, support_pct, others_pct)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`),
+    INSERT INTO shares (customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+  movePeriod: db.prepare('UPDATE periods SET start_month = ? WHERE id = ?'),
   customerHasData: db.prepare(`
     SELECT EXISTS (
       SELECT 1 FROM periods p WHERE p.customer_id = ?
@@ -120,9 +121,10 @@ function parseSplit(src, name) {
 }
 
 // Revenue shares. The first is always "Onboarding" and starts in the onboard month: for Monthly
-// it runs to a To month you choose; for Yearly and Three Years it's the one-time onboarding payment
-// (To = From). Every share added after it (Renewal, ...) has From and To months. The customer's
-// periods are the payments inside its shares, so shares can't overlap.
+// it runs to a To month you choose; for Yearly and Three Years it covers the first 12 or 36 months
+// and is paid once, in a payment month you choose inside them. Every share added after it
+// (Renewal, ...) has From and To months. The customer's periods are the payments inside its
+// shares, so shares can't overlap.
 function parseShares(list, onboard, frequency) {
   if (!Array.isArray(list) || list.length === 0) throw new HttpError(400, 'Add at least one revenue share.');
   const oneTimeOnboarding = frequency !== 'Monthly';
@@ -132,73 +134,86 @@ function parseShares(list, onboard, frequency) {
     const from = i === 0 ? onboard : String(s.from_month ?? '');
     if (!MONTH_RE.test(from)) throw new HttpError(400, `${name}: choose the From month.`);
     if (from < onboard) throw new HttpError(400, `${name} starts before the onboard month (${monthLabel(onboard)}).`);
-    let to = from;
-    if (!(i === 0 && oneTimeOnboarding)) {
+    let to;
+    let payment = null;
+    if (i === 0 && oneTimeOnboarding) {
+      to = addMonths(from, FREQUENCIES[frequency].step - 1);
+      payment = s.payment_month ? String(s.payment_month) : from;
+      if (!MONTH_RE.test(payment) || payment < from || payment > to) {
+        throw new HttpError(400, `Onboarding: choose a payment month from ${monthLabel(from)} to ${monthLabel(to)}.`);
+      }
+    } else {
       to = String(s.to_month ?? '');
       if (!MONTH_RE.test(to)) throw new HttpError(400, `${name}: choose the To month.`);
       if (to < from) throw new HttpError(400, `${name}: the To month is before the From month.`);
     }
-    return { name, from, to, ...parseSplit(s, name) };
-  }).sort((a, b) => a.from.localeCompare(b.from));
+    return { name, from_month: from, to_month: to, payment_month: payment, ...parseSplit(s, name) };
+  }).sort((a, b) => a.from_month.localeCompare(b.from_month));
 
   for (let i = 1; i < shares.length; i++) {
     const a = shares[i - 1];
     const b = shares[i];
-    if (a.to >= b.from) {
-      throw new HttpError(400, `${a.name} (to ${monthLabel(a.to)}) overlaps ${b.name} (from ${monthLabel(b.from)}). Each month can only have one revenue share.`);
+    if (a.to_month >= b.from_month) {
+      throw new HttpError(400, `${a.name} (to ${monthLabel(a.to_month)}) overlaps ${b.name} (from ${monthLabel(b.from_month)}). Each month can only have one revenue share.`);
     }
   }
-  const total = shares.reduce((n, s) => n + periodMonthsIn(s.from, s.to, frequency).length, 0);
+  const total = shares.reduce((n, s) => n + paymentMonths(s, frequency).length, 0);
   if (total > MAX_PERIODS) throw new HttpError(400, `These shares cover ${total} payments. Keep it to ${MAX_PERIODS} or fewer.`);
   return shares;
 }
 
-// The payment periods inside one share: every month for Monthly, every 12 or 36 months from the
-// share's From month for Yearly and Three Years.
-function periodMonthsIn(from, to, frequency) {
+// The payments inside one share: every month for Monthly. A Yearly or Three Years share is one
+// payment covering From to To, paid in its payment month (the From month unless one was chosen).
+function paymentMonths(share, frequency) {
+  if (frequency !== 'Monthly') return [share.payment_month || share.from_month];
   const months = [];
-  for (let m = from; m <= to; m = addMonths(m, FREQUENCIES[frequency].step)) months.push(m);
+  for (let m = share.from_month; m <= share.to_month; m = addMonths(m, 1)) months.push(m);
   return months;
 }
 
-// Save the shares and make the customer's periods match them: add the missing payments and remove
-// the ones no share covers any more. A period with revenue or a split is never removed.
-function saveShares(customerId, shares, frequency) {
-  const wanted = new Set(shares.flatMap((s) => periodMonthsIn(s.from, s.to, frequency)));
+// Make a customer's periods match its shares. For Yearly and Three Years a share has one payment,
+// so a payment whose month changed inside its share is moved (keeping its revenue and split).
+// Missing payments are added and empty ones no share wants are removed. A payment with revenue
+// or a split is never removed: with strict it's an error, otherwise it's left alone.
+function syncPeriods(customerId, shares, frequency, strict) {
   const existing = q.periodsFor.all(customerId);
+  const wanted = new Set(shares.flatMap((s) => paymentMonths(s, frequency)));
+  if (frequency !== 'Monthly') {
+    for (const s of shares) {
+      const month = paymentMonths(s, frequency)[0];
+      if (existing.some((p) => p.start_month === month)) continue;
+      const inside = existing.find((p) => !wanted.has(p.start_month) && p.start_month >= s.from_month && p.start_month <= s.to_month);
+      if (inside) {
+        q.movePeriod.run(month, inside.id);
+        inside.start_month = month;
+      }
+    }
+  }
   for (const p of existing) {
     if (wanted.has(p.start_month)) continue;
-    if (q.periodHasData.get(p.id).has_data) {
-      throw new HttpError(409, `${periodLabelFor(p.start_month, frequency)} already has revenue or a split, so it has to stay inside a revenue share. Change the share months, or clear that period first.`);
+    if (!q.periodHasData.get(p.id).has_data) q.deletePeriod.run(p.id);
+    else if (strict) {
+      throw new HttpError(409, `The payment in ${monthLabel(p.start_month)} already has revenue or a split, so it has to stay inside a revenue share. Change the share months, or clear that payment first.`);
     }
-    q.deletePeriod.run(p.id);
   }
   const have = new Set(existing.map((p) => p.start_month));
   for (const m of [...wanted].sort()) if (!have.has(m)) q.insertPeriod.run(customerId, m, 0);
-
-  q.deleteSharesFor.run(customerId);
-  for (const s of shares) q.insertShare.run(customerId, s.name, s.from, s.to, s.direct, s.support, s.others);
 }
 
-// Data from before periods followed shares: add each customer's missing share payments and remove
-// empty periods that no share covers. Periods with revenue or a split are kept.
+function saveShares(customerId, shares, frequency) {
+  syncPeriods(customerId, shares, frequency, true);
+  q.deleteSharesFor.run(customerId);
+  for (const s of shares) {
+    q.insertShare.run(customerId, s.name, s.from_month, s.to_month, s.payment_month, s.direct, s.support, s.others);
+  }
+}
+
+// Data saved by earlier versions: bring every customer's periods in line with its shares.
 transaction(() => {
   for (const c of db.prepare('SELECT id, frequency FROM customers').all()) {
-    const shares = q.sharesFor.all(c.id);
-    const wanted = new Set(shares.flatMap((s) => periodMonthsIn(s.from_month, s.to_month, c.frequency)));
-    const existing = q.periodsFor.all(c.id);
-    for (const p of existing) {
-      if (!wanted.has(p.start_month) && !q.periodHasData.get(p.id).has_data) q.deletePeriod.run(p.id);
-    }
-    const have = new Set(existing.map((p) => p.start_month));
-    for (const m of wanted) if (!have.has(m)) q.insertPeriod.run(c.id, m, 0);
+    syncPeriods(c.id, q.sharesFor.all(c.id), c.frequency, false);
   }
 });
-
-const periodLabelFor = (ym, frequency) => {
-  const step = FREQUENCIES[frequency].step;
-  return step === 1 ? monthLabel(ym) : `${monthLabel(ym)} to ${monthLabel(addMonths(ym, step - 1))}`;
-};
 
 // The share whose months cover a period, or null.
 const shareFor = (shares, month) =>
@@ -226,7 +241,13 @@ function customerDetail(id) {
       : { Direct: 0, Support: 0, Others: 0 };
     const rows = allocations.filter((a) => a.period_id === p.id)
       .map((a) => ({ ...a, active: Boolean(a.active), pay: p.revenue * pctFor[a.category] * a.weightage }));
-    return { ...p, share, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
+    // Months the payment covers: the month itself for Monthly; for Yearly and Three Years its
+    // share's From to To (12 or 36 months if no share covers it). start_month is when it's paid.
+    const monthly = customer.frequency === 'Monthly';
+    const cover_from = !monthly && share ? share.from_month : p.start_month;
+    const end_month = monthly ? p.start_month
+      : share ? share.to_month : addMonths(p.start_month, FREQUENCIES[customer.frequency].step - 1);
+    return { ...p, cover_from, end_month, share, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
   });
   return { ...customer, shares, periods };
 }

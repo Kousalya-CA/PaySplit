@@ -18,11 +18,17 @@ export const addMonths = (ym, n) => {
 // Months in one period: 36 for Three Years, 12 for Yearly, 1 for Monthly.
 export const periodMonths = (frequency) => ({ 'Three Years': 36, Yearly: 12 }[frequency] || 1);
 
-// 'Oct 2026' for a month, 'Oct 2026 to Sep 2027' for a year, 'Oct 2026 to Sep 2029' for three years.
-export const periodLabel = (ym, frequency) => {
-  const months = periodMonths(frequency);
-  return months > 1 ? `${monthLabel(ym)} to ${monthLabel(addMonths(ym, months - 1))}` : monthLabel(ym);
+// The months a period covers: 'Oct 2026' for one month, otherwise 'Oct 2026 to Sep 2027'.
+// Yearly and Three Years periods cover their revenue share (cover_from / end_month from the server).
+export const periodLabel = (period) => {
+  const from = period.cover_from || period.start_month;
+  const to = period.end_month || period.start_month;
+  return from === to ? monthLabel(from) : `${monthLabel(from)} to ${monthLabel(to)}`;
 };
+
+// 'Paid in Dec 2026' when a payment is paid in a different month than it starts covering.
+export const paidIn = (period) =>
+  period.cover_from && period.cover_from !== period.start_month ? `Paid in ${monthLabel(period.start_month)}` : '';
 
 // 0.142857 -> '14.29%'
 export const pct = (fraction) => `${+(fraction * 100).toFixed(2)}%`;

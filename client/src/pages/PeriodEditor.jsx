@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { money, periodLabel, pct, toPctInput, parseNum, monthLabel } from '../format.js';
+import { money, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel } from '../format.js';
 import { ErrorNote } from '../components/common.jsx';
 
 const CATEGORIES = ['Direct', 'Support', 'Others'];
@@ -18,7 +18,7 @@ const fractionOf = (row) => (row.exact != null ? row.exact : parseNum(row.weight
 // Edits one period: revenue plus the contributors in Direct, Support and Others.
 // Pay = Revenue x Category % x Weightage %, recalculated as you type.
 export default function PeriodEditor({ customer, period, prev, employees, onSaved, onDirtyChange }) {
-  const label = periodLabel(period.start_month, customer.frequency);
+  const label = periodLabel(period);
   const [revenue, setRevenue] = useState(String(period.revenue));
   const [rows, setRows] = useState(() => rowsFrom(period.allocations));
   const [dirty, setDirty] = useState(false);
@@ -86,13 +86,12 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
 
   const totalPaid = CATEGORIES.reduce((s, c) => s + stats[c].paid, 0);
-  const wording = {
-    'Three Years': { note: 'One split for the whole 36 months.', revenue: 'Revenue for the 3 years' },
-    Yearly: { note: 'One split for the whole year.', revenue: 'Annual revenue' },
-  }[customer.frequency] || {
-    note: 'This month\'s split. It can be different every month.',
-    revenue: `Revenue for ${monthLabel(period.start_month)}`,
-  };
+  const wording = customer.frequency === 'Monthly'
+    ? { note: 'This month\'s split. It can be different every month.', revenue: `Revenue for ${monthLabel(period.start_month)}` }
+    : {
+      note: `One payment and one split for ${label}. ${paidIn(period) || `Paid in ${monthLabel(period.start_month)}`}.`,
+      revenue: 'Revenue for this payment',
+    };
 
   return (
     <div className="period">

@@ -189,6 +189,7 @@ fieldset { border: 0; padding: 0; margin: 0; }
 .share { border: 2px solid var(--line); border-radius: .6rem; padding: .9rem 1rem 1rem; display: grid; gap: .6rem; }
 .page .share legend { padding: 0 .35rem; margin-bottom: 0; }
 .share .row > label.grow { flex: 2; min-width: 12rem; }
+.share .row > label.month-field { flex: 1 1 12rem; min-width: 12rem; }
 .share-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
 .share-list { margin: .3rem 0 0; padding-left: 1.1rem; }
 .actions { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }

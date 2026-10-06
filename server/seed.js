@@ -43,12 +43,12 @@ transaction(() => {
     const customerId = Number(db.prepare('INSERT INTO customers (name, onboard_month, frequency) VALUES (?, ?, ?)')
       .run(c.name, c.onboard, c.frequency).lastInsertRowid);
     const { step } = FREQUENCIES[c.frequency];
-    // One "Onboarding" share: 12 months for Monthly, the one-time payment for Yearly.
+    // One "Onboarding" share for the first 12 months: 12 monthly payments, or one yearly payment.
     const count = c.frequency === 'Monthly' ? 12 : 1;
     db.prepare(`
       INSERT INTO shares (customer_id, name, from_month, to_month, direct_pct, support_pct, others_pct)
       VALUES (?, 'Onboarding', ?, ?, ?, ?, ?)`)
-      .run(customerId, c.onboard, addMonths(c.onboard, (count - 1) * step), ...c.split);
+      .run(customerId, c.onboard, addMonths(c.onboard, count * step - 1), ...c.split);
     for (let i = 0; i < count; i++) {
       const data = c.periods[i] || { revenue: 0 };
       const periodId = Number(db.prepare('INSERT INTO periods (customer_id, start_month, revenue) VALUES (?, ?, ?)')

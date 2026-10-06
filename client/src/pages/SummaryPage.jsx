@@ -90,7 +90,7 @@ export default function SummaryPage() {
           </tfoot>
         </table>
       </div>
-      <p className="muted small">A Yearly or Three Years customer's pay is counted in the month its period starts, the same as the Excel workbook.</p>
+      <p className="muted small">A Yearly or Three Years customer's pay is counted in the month it's paid, the same as the Excel workbook.</p>
     </section>
   );
 }

@@ -61,7 +61,7 @@ export default function CustomerDetail({ id }) {
   // Periods grouped by the revenue share that covers them. Periods outside every share (only
   // possible for old data with revenue) get their own group.
   const groups = customer.shares.map((s) => ({
-    key: s.id, name: s.name, months: shareMonths(s, customer.frequency),
+    key: s.id, name: s.name, months: shareMonths(s),
     periods: periods.filter((p) => p.share?.id === s.id),
   }));
   const loose = periods.filter((p) => !p.share);
@@ -81,7 +81,7 @@ export default function CustomerDetail({ id }) {
           <ul className="share-list muted small">
             {customer.shares.map((s) => (
               <li key={s.id}>
-                <strong>{s.name}</strong> ({shareMonths(s, customer.frequency)}): Direct {pct(s.direct_pct)},
+                <strong>{s.name}</strong> ({shareMonths(s)}): Direct {pct(s.direct_pct)},
                 Support {pct(s.support_pct)}, Others {pct(s.others_pct)}
               </li>
             ))}
@@ -124,7 +124,7 @@ export default function CustomerDetail({ id }) {
               {activeGroup.periods.map((p) => (
                 <button key={p.id} role="tab" aria-selected={p.id === selectedId}
                   className={`period-tab ${p.revenue > 0 ? 'has-revenue' : ''}`} onClick={() => choosePeriod(p.id)}>
-                  <span>{periodLabel(p.start_month, customer.frequency)}</span>
+                  <span>{periodLabel(p)}</span>
                   <small>{p.revenue > 0 ? money(p.revenue) : 'No revenue'}</small>
                 </button>
               ))}
