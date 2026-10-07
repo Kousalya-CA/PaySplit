@@ -32,13 +32,13 @@ function toNumber(value, label) {
 // ---------- queries ----------------------------------------------------------
 const q = {
   employees: db.prepare(`
-    SELECT e.id, e.name, e.active, e.type,
+    SELECT e.id, e.name, e.email, e.active, e.type,
       (SELECT COUNT(*) FROM allocations a WHERE a.employee_id = e.id) AS split_count,
       (SELECT COALESCE(SUM(pay), 0) FROM payments p WHERE p.employee_id = e.id) AS total_pay
     FROM employees e ORDER BY e.active DESC, e.id`),
-  employee: db.prepare('SELECT id, name, active, type FROM employees WHERE id = ?'),
-  insertEmployee: db.prepare('INSERT INTO employees (name, type) VALUES (?, ?)'),
-  updateEmployee: db.prepare('UPDATE employees SET name = ?, active = ?, type = ? WHERE id = ?'),
+  employee: db.prepare('SELECT id, name, email, active, type FROM employees WHERE id = ?'),
+  insertEmployee: db.prepare('INSERT INTO employees (name, type, email) VALUES (?, ?, ?)'),
+  updateEmployee: db.prepare('UPDATE employees SET name = ?, active = ?, type = ?, email = ? WHERE id = ?'),
   deleteEmployee: db.prepare('DELETE FROM employees WHERE id = ?'),
   employeeSplits: db.prepare('SELECT COUNT(*) AS n FROM allocations WHERE employee_id = ?'),
 
@@ -102,6 +102,22 @@ const q = {
 };
 
 // ---------- validation -------------------------------------------------------
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// An employee's work email: required, stored in lower case.
+function parseEmployeeEmail(value) {
+  const email = String(value ?? '').trim().toLowerCase();
+  if (!email) throw new HttpError(400, 'Enter the employee\'s email address.');
+  if (!EMAIL_RE.test(email)) throw new HttpError(400, `${email} doesn't look like an email address.`);
+  return email;
+}
+
+function employeeUniqueError(err, name, email) {
+  if (!isUniqueError(err)) return;
+  if (/email/i.test(err.message)) throw new HttpError(409, `Another employee already uses ${email}.`);
+  throw new HttpError(409, `${name} is already in the employee list.`);
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthLabel = (ym) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
 
@@ -266,16 +282,17 @@ export function registerDataRoutes(router) {
   router.post('/api/employees', ({ body, setStatus }) => {
     const name = String(body.name ?? '').trim();
     if (!name) throw new HttpError(400, 'Enter the employee name.');
+    const email = parseEmployeeEmail(body.email);
     const type = body.type || 'Product';
     if (!['Product', 'Support', 'Admin'].includes(type)) {
       throw new HttpError(400, 'Type must be Product, Support, or Admin.');
     }
     try {
-      const { lastInsertRowid } = q.insertEmployee.run(name, type);
+      const { lastInsertRowid } = q.insertEmployee.run(name, type, email);
       setStatus(201);
-      return { id: Number(lastInsertRowid), name, active: true, type, split_count: 0, total_pay: 0 };
+      return { id: Number(lastInsertRowid), name, email, active: true, type, split_count: 0, total_pay: 0 };
     } catch (err) {
-      if (isUniqueError(err)) throw new HttpError(409, `${name} is already in the employee list.`);
+      employeeUniqueError(err, name, email);
       throw err;
     }
   });
@@ -291,13 +308,14 @@ export function registerDataRoutes(router) {
     if (!['Product', 'Support', 'Admin'].includes(type)) {
       throw new HttpError(400, 'Type must be Product, Support, or Admin.');
     }
+    const email = body.email === undefined ? current.email : parseEmployeeEmail(body.email);
     try {
-      q.updateEmployee.run(name, active, type, params.id);
+      q.updateEmployee.run(name, active, type, email, params.id);
     } catch (err) {
-      if (isUniqueError(err)) throw new HttpError(409, `${name} is already in the employee list.`);
+      employeeUniqueError(err, name, email);
       throw err;
     }
-    return { id: params.id, name, active: Boolean(active), type };
+    return { id: params.id, name, email, active: Boolean(active), type };
   });
 
   router.delete('/api/employees/:id', ({ params }) => {

@@ -5,9 +5,10 @@ import { Loading, ErrorNote, Money } from '../components/common.jsx';
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState(null);
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [type, setType] = useState('Product');
   const [error, setError] = useState('');
-  const [editing, setEditing] = useState(null); // { id, name, type }
+  const [editing, setEditing] = useState(null); // { id, name, email, type }
 
   const load = () => api.employees.list().then(setEmployees).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
@@ -16,8 +17,9 @@ export default function EmployeesPage() {
     e.preventDefault();
     setError('');
     try {
-      await api.employees.create(name, type);
+      await api.employees.create(name, type, email);
       setName('');
+      setEmail('');
       setType('Product');
       load();
     } catch (err) { setError(err.message); }
@@ -27,7 +29,7 @@ export default function EmployeesPage() {
     e.preventDefault();
     setError('');
     try {
-      await api.employees.update(editing.id, { name: editing.name, type: editing.type });
+      await api.employees.update(editing.id, { name: editing.name, email: editing.email, type: editing.type });
       setEditing(null);
       load();
     } catch (err) { setError(err.message); }
@@ -55,6 +57,10 @@ export default function EmployeesPage() {
           <span>New employee</span>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" required />
         </label>
+        <label className="grow">
+          <span>Email</span>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" required />
+        </label>
         <label>
           <span>Type</span>
           <select value={type} onChange={(e) => setType(e.target.value)}>
@@ -75,6 +81,7 @@ export default function EmployeesPage() {
             <thead>
               <tr>
                 <th scope="col">Name</th>
+                <th scope="col">Email</th>
                 <th scope="col">Type</th>
                 <th scope="col">Status</th>
                 <th scope="col" className="num">In splits</th>
@@ -87,7 +94,7 @@ export default function EmployeesPage() {
                 <tr key={emp.id} className={emp.active ? '' : 'inactive'}>
                   <th scope="row">
                     {editing?.id === emp.id ? (
-                      <form className="rename" onSubmit={saveName}>
+                      <form className="rename" id={`edit-${emp.id}`} onSubmit={saveName}>
                         <input aria-label="Employee name" value={editing.name} autoFocus
                           onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
                         <button className="primary small" type="submit">Save</button>
@@ -95,6 +102,12 @@ export default function EmployeesPage() {
                       </form>
                     ) : emp.name}
                   </th>
+                  <td>
+                    {editing?.id === emp.id ? (
+                      <input type="email" aria-label="Employee email" value={editing.email} placeholder="name@company.com" form={`edit-${emp.id}`}
+                        required onChange={(e) => setEditing({ ...editing, email: e.target.value })} />
+                    ) : emp.email || <span className="warn-text small">Add email</span>}
+                  </td>
                   <td>
                     {editing?.id === emp.id ? (
                       <select value={editing.type} onChange={(e) => setEditing({ ...editing, type: e.target.value })}>
@@ -110,7 +123,7 @@ export default function EmployeesPage() {
                   <td className="row-actions">
                     {editing?.id !== emp.id && (
                       <>
-                        <button className="link" onClick={() => setEditing({ id: emp.id, name: emp.name, type: emp.type })}>Edit</button>
+                        <button className="link" onClick={() => setEditing({ id: emp.id, name: emp.name, email: emp.email || '', type: emp.type })}>Edit</button>
                         <button className="link" onClick={() => toggleActive(emp)}>{emp.active ? 'Mark inactive' : 'Mark active'}</button>
                         {emp.split_count === 0 && <button className="link danger" onClick={() => remove(emp)}>Delete</button>}
                       </>
@@ -123,6 +136,7 @@ export default function EmployeesPage() {
         </div>
       )}
       <p className="muted small">
+        Each employee's email should be the one they use on the Azure DevOps sprint board.
         Inactive employees keep their pay history but no longer appear when you add contributors.
         Employees who are already part of a split can't be deleted.
       </p>

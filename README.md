@@ -106,7 +106,7 @@ client/src/
 ```
 users                    id, name, email, role (admin/employee), is_owner, last_login_at, setup link
 sessions                 login sessions
-employees                id, name, active
+employees                id, name, email, active, type
 customers                id, name, onboard_month, frequency
 shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct
 periods                  id, customer_id, start_month, revenue, total_usd, usd_pct, usd_inr_rate

@@ -38,7 +38,7 @@ export const api = {
 
   employees: {
     list: () => request('/employees'),
-    create: (name, type) => request('/employees', { method: 'POST', body: { name, type } }),
+    create: (name, type, email) => request('/employees', { method: 'POST', body: { name, type, email } }),
     update: (id, body) => request(`/employees/${id}`, { method: 'PATCH', body }),
     remove: (id) => request(`/employees/${id}`, { method: 'DELETE' }),
   },

@@ -247,6 +247,10 @@ const addEmployeeColumn = (name, definition) => {
   if (!employeeColumns.has(name)) db.exec(`ALTER TABLE employees ADD COLUMN ${name} ${definition}`);
 };
 addEmployeeColumn('type', "TEXT NOT NULL DEFAULT 'Product' CHECK (type IN ('Product', 'Support', 'Admin'))");
+// Work email, used to match people on the Azure DevOps sprint board. Empty for employees added
+// before it existed; no two employees can share one.
+addEmployeeColumn('email', 'TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_email ON employees(email COLLATE NOCASE) WHERE email IS NOT NULL');
 
 // The owner is the permanent admin: OWNER_EMAIL if set, otherwise the first account created.
 if (!db.prepare('SELECT 1 FROM users WHERE is_owner = 1').get()) {
