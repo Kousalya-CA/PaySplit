@@ -86,6 +86,28 @@ db.exec(`
     UNIQUE (period_id, category, employee_id)
   );
 
+  -- Azure DevOps sprint board settings. The PAT is never stored here: it comes from AZ_PAT.
+  CREATE TABLE IF NOT EXISTS azdo_settings (
+    key   TEXT PRIMARY KEY,                       -- 'org' or 'project'
+    value TEXT NOT NULL
+  );
+  -- Area paths to read tasks from, each with its sprints (iteration paths, about a month each).
+  -- Sprint name and dates are copied from Azure DevOps when the sprint is added or refreshed.
+  CREATE TABLE IF NOT EXISTS azdo_areas (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT NOT NULL UNIQUE COLLATE NOCASE,     -- e.g. 'Trisul.Org\\Agentic - Billing and Data Platform'
+    name TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS azdo_iterations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    area_id     INTEGER NOT NULL REFERENCES azdo_areas(id) ON DELETE CASCADE,
+    path        TEXT NOT NULL COLLATE NOCASE,     -- e.g. 'Trisul.Org\\Sprint 3'
+    name        TEXT NOT NULL,
+    start_date  TEXT,                             -- 'YYYY-MM-DD', or NULL if not set in Azure DevOps
+    finish_date TEXT,
+    UNIQUE (area_id, path)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_periods_customer ON periods(customer_id);
   CREATE INDEX IF NOT EXISTS idx_alloc_period ON allocations(period_id);
   CREATE INDEX IF NOT EXISTS idx_alloc_employee ON allocations(employee_id);

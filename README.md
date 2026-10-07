@@ -60,6 +60,18 @@ Open http://localhost:5173.
 | Employees     | Add, rename, and mark employees active or inactive                          |
 | All payments  | Every payment row, with filters and a CSV download                         |
 | Users         | Admins only: add people as Admin or Employee, send setup links, remove access |
+| Azure DevOps  | Admins only: organisation, project, area paths and their sprints           |
+
+Click an employee's name to see their Azure DevOps tasks in each configured area path and sprint,
+grouped under the parent User Story (matched by the employee's email).
+
+## Azure DevOps
+
+Set the **`AZ_PAT`** environment variable (on Azure: App Service > Configuration > Application
+settings) to a personal access token with **Work Items (Read)** access. It's never stored in the
+database or sent to the browser. Then, on the Azure DevOps page, enter the organisation and project,
+add area paths, and add sprints (iteration paths) under each one; each is checked with Azure DevOps
+and a sprint's name and dates are copied from there.
 
 ## Users and logins
 
@@ -74,8 +86,10 @@ access and can't be deleted or changed. Owner is not a role you can give to othe
 If the database has no users at all, the login page shows a one-time form to create the owner.
 
 - **Owner:** everything, including the Users page. Only one, set automatically.
-- **Admin:** everything, including the Users page.
-- **Employee:** everything except the Users page.
+- **Admin:** everything, including the Users and Azure DevOps pages.
+- **Employee:** only their own data on the Summary, Employees and All payments pages, plus their own
+  Azure DevOps tasks. No Customers, Users or Azure DevOps pages. A login is linked to an employee by
+  email, so the login's email must match the employee's email on the Employees page.
 
 Helpful tools on the customer page:
 - **Split equally** gives every contributor in a category the same weightage.
@@ -94,6 +108,7 @@ server/
   routes/auth.js    Log in, log out, first-time setup, setup links
   routes/users.js   Users page API (admins only)
   routes/data.js    Employees, customers, periods, payments, summary
+  routes/azdo.js    Azure DevOps settings and each employee's sprint tasks
 client/src/
   App.jsx           Login or the app
   components/       Top bar and navigation, shared bits
@@ -112,6 +127,9 @@ shares                   id, customer_id, name, from_month, to_month, payment_mo
 periods                  id, customer_id, start_month, revenue, total_usd, usd_pct, usd_inr_rate
 allocations              id, period_id, category, employee_id, weightage
 payments (view)          every allocation with pay = revenue × category % × weightage
+azdo_settings            key, value (Azure DevOps organisation and project)
+azdo_areas               id, path, name
+azdo_iterations          id, area_id, path, name, start_date, finish_date
 ```
 
 Percentages are stored as fractions (0.7 = 70%).

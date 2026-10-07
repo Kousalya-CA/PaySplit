@@ -273,11 +273,25 @@ function customerDetail(id) {
   return { ...customer, shares, periods };
 }
 
+// ---------- who can see what -------------------------------------------------
+const employeeByEmail = db.prepare('SELECT id FROM employees WHERE email = ? COLLATE NOCASE');
+export const isAdmin = (user) => user?.role === 'admin';
+// The employee an Employee login belongs to (same email), or null.
+export const myEmployeeId = (user) => (user?.email ? employeeByEmail.get(user.email)?.id ?? null : null);
+
 // ---------- routes -----------------------------------------------------------
 export function registerDataRoutes(router) {
+  // Admins see and change everything. An Employee login only sees its own employee (matched by
+  // email): its row on the Employees page, its pay on the Summary and its rows in All payments.
+  const admin = { admin: true };
+
   // Employees
-  router.get('/api/employees', () =>
-    q.employees.all().map((e) => ({ ...e, active: Boolean(e.active) })));
+  router.get('/api/employees', ({ user }) => {
+    const mine = isAdmin(user) ? null : myEmployeeId(user);
+    return q.employees.all()
+      .filter((e) => isAdmin(user) || e.id === mine)
+      .map((e) => ({ ...e, active: Boolean(e.active) }));
+  });
 
   router.post('/api/employees', ({ body, setStatus }) => {
     const name = String(body.name ?? '').trim();
@@ -295,7 +309,7 @@ export function registerDataRoutes(router) {
       employeeUniqueError(err, name, email);
       throw err;
     }
-  });
+  }, admin);
 
 
   router.patch('/api/employees/:id', ({ params, body }) => {
@@ -316,7 +330,7 @@ export function registerDataRoutes(router) {
       throw err;
     }
     return { id: params.id, name, email, active: Boolean(active), type };
-  });
+  }, admin);
 
   router.delete('/api/employees/:id', ({ params }) => {
     const current = q.employee.get(params.id);
@@ -326,13 +340,13 @@ export function registerDataRoutes(router) {
       throw new HttpError(409, `${current.name} is part of ${n} payment split${n === 1 ? '' : 's'}, so their history can't be deleted. Mark them inactive instead.`);
     }
     q.deleteEmployee.run(params.id);
-  });
+  }, admin);
 
   // Customers
   router.get('/api/customers', () => {
     const shares = q.allShares.all();
     return q.customers.all().map((c) => ({ ...c, shares: shares.filter((s) => s.customer_id === c.id) }));
-  });
+  }, admin);
 
   router.post('/api/customers', ({ body, setStatus }) => {
     const name = String(body.name ?? '').trim();
@@ -355,9 +369,9 @@ export function registerDataRoutes(router) {
     });
     setStatus(201);
     return customerDetail(id);
-  });
+  }, admin);
 
-  router.get('/api/customers/:id', ({ params }) => customerDetail(params.id));
+  router.get('/api/customers/:id', ({ params }) => customerDetail(params.id), admin);
 
   router.patch('/api/customers/:id', ({ params, body }) => {
     const current = requireCustomer(params.id);
@@ -390,12 +404,12 @@ export function registerDataRoutes(router) {
       if (shares) saveShares(params.id, shares, frequency);
     });
     return customerDetail(params.id);
-  });
+  }, admin);
 
   router.delete('/api/customers/:id', ({ params }) => {
     requireCustomer(params.id);
     q.deleteCustomer.run(params.id);
-  });
+  }, admin);
 
   // Today's USD to INR rate (European Central Bank reference rate via frankfurter.dev, no key
   // needed), cached for an hour. The period editor fills it in; it can still be changed by hand.
@@ -412,7 +426,7 @@ export function registerDataRoutes(router) {
     } catch {
       throw new HttpError(502, "Couldn't get today's USD to INR rate. Type the rate in yourself.");
     }
-  });
+  }, admin);
 
   // Periods are created and removed by the customer's revenue shares (saveShares).
   // Save a period: revenue plus the full list of contributors (replaces the old list).
@@ -466,18 +480,30 @@ export function registerDataRoutes(router) {
       for (const r of rows) q.insertAllocation.run(params.id, r.category, r.employee_id, r.weightage);
     });
     return customerDetail(period.customer_id);
-  });
+  }, admin);
 
   // Consolidated log: the "All Payments" sheet
-  router.get('/api/payments', () => q.payments.all());
+  router.get('/api/payments', ({ user }) => {
+    if (isAdmin(user)) return q.payments.all();
+    const mine = myEmployeeId(user);
+    return q.payments.all().filter((r) => r.employee_id === mine);
+  });
 
-  // The "Monthly Summary" sheet: pay per employee per month, plus yearly totals
-  router.get('/api/summary', () => {
-    const months = q.months.all().map((r) => r.start_month);
+  // The "Monthly Summary" sheet: pay per employee per month, plus yearly totals.
+  // For an Employee login: only their own row and months, and no company-wide revenue figures.
+  router.get('/api/summary', ({ user }) => {
+    const self = !isAdmin(user);
+    const mine = self ? myEmployeeId(user) : null;
+    let pay = q.payByEmployeeMonth.all();
+    let customerPay = q.payByEmployeeCustomerMonth.all();
+    if (self) {
+      pay = pay.filter((p) => p.employee_id === mine);
+      customerPay = customerPay.filter((p) => p.employee_id === mine);
+    }
+    const months = self ? [...new Set(pay.map((p) => p.start_month))].sort() : q.months.all().map((r) => r.start_month);
     const years = [...new Set(months.map((m) => m.slice(0, 4)))];
-    const pay = q.payByEmployeeMonth.all();
-    const customerPay = q.payByEmployeeCustomerMonth.all();
     const employees = q.employees.all()
+      .filter((e) => !self || e.id === mine)
       .map((e) => {
         const byMonth = {};
         const byYear = {};
@@ -503,10 +529,16 @@ export function registerDataRoutes(router) {
           customers: [...customers.values()],
         };
       })
-      .filter((e) => e.active || e.total !== 0);
+      .filter((e) => self || e.active || e.total !== 0);
     const monthTotals = Object.fromEntries(months.map((m) => [m, employees.reduce((s, e) => s + (e.byMonth[m] || 0), 0)]));
     const yearTotals = Object.fromEntries(years.map((y) => [y, employees.reduce((s, e) => s + (e.byYear[y] || 0), 0)]));
+    if (self) {
+      const message = mine ? null
+        : 'Your login isn\'t linked to an employee yet. Ask an admin to add your email to your entry on the Employees page.';
+      const paid = employees.reduce((s, e) => s + e.total, 0);
+      return { self: true, message, months, years, employees, monthTotals, yearTotals, totals: { revenue: null, paid } };
+    }
     const totals = q.totals.get();
-    return { months, years, employees, monthTotals, yearTotals, totals };
+    return { self: false, months, years, employees, monthTotals, yearTotals, totals };
   });
 }

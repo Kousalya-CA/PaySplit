@@ -41,3 +41,9 @@ export const parseNum = (text) => {
   const n = Number(String(text).replace(/,/g, '').trim());
   return String(text).trim() === '' || !Number.isFinite(n) ? NaN : n;
 };
+
+// '2026-10-06' -> '6 Oct 2026'
+export const dayLabel = (iso) => {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  return `${d} ${MONTHS[m - 1]} ${y}`;
+};

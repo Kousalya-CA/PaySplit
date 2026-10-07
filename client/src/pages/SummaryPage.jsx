@@ -4,7 +4,8 @@ import { money, monthLabel } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 
 // Same as the "Monthly Summary" sheet: pay per employee per month, then yearly totals.
-export default function SummaryPage() {
+// An Employee login gets only their own row (the server filters it) and no company-wide figures.
+export default function SummaryPage({ isAdmin }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
@@ -14,15 +15,21 @@ export default function SummaryPage() {
   if (!data) return <Loading />;
 
   const { months, years, employees, monthTotals, yearTotals, totals } = data;
-  const unallocated = totals.revenue - totals.paid;
+  const unallocated = data.self ? 0 : totals.revenue - totals.paid;
 
-  if (!months.length) {
+  if (data.message || !months.length) {
     return (
       <section>
         <h1>Summary</h1>
         <div className="empty">
-          <p>No customers yet. Add a customer and assign contributors, and each employee's pay will appear here month by month.</p>
-          <a className="primary" href="#/customers">Add a customer</a>
+          {data.message ? <p>{data.message}</p> : data.self ? (
+            <p>No pay has been recorded for you yet.</p>
+          ) : (
+            <>
+              <p>No customers yet. Add a customer and assign contributors, and each employee's pay will appear here month by month.</p>
+              {isAdmin && <a className="primary" href="#/customers">Add a customer</a>}
+            </>
+          )}
         </div>
       </section>
     );
@@ -31,17 +38,23 @@ export default function SummaryPage() {
   return (
     <section>
       <div className="page-head">
-        <h1>Summary</h1>
+        <h1>{data.self ? 'My pay' : 'Summary'}</h1>
       </div>
 
-      <dl className="figures">
-        <div><dt>Revenue entered</dt><dd>{money(totals.revenue)}</dd></div>
-        <div><dt>Paid to employees</dt><dd>{money(totals.paid)}</dd></div>
-        <div>
-          <dt>Not assigned to anyone</dt>
-          <dd className={unallocated > 0.005 ? 'warn-text' : ''}>{money(unallocated)}</dd>
-        </div>
-      </dl>
+      {data.self ? (
+        <dl className="figures">
+          <div><dt>Total pay</dt><dd>{money(totals.paid)}</dd></div>
+        </dl>
+      ) : (
+        <dl className="figures">
+          <div><dt>Revenue entered</dt><dd>{money(totals.revenue)}</dd></div>
+          <div><dt>Paid to employees</dt><dd>{money(totals.paid)}</dd></div>
+          <div>
+            <dt>Not assigned to anyone</dt>
+            <dd className={unallocated > 0.005 ? 'warn-text' : ''}>{money(unallocated)}</dd>
+          </div>
+        </dl>
+      )}
       {unallocated > 0.005 && (
         <p className="muted small">
           Some revenue isn't paid out because a category's weightages add up to less than 100%.
@@ -59,7 +72,7 @@ export default function SummaryPage() {
               <th scope="col" className="num">Total</th>
             </tr>
           </thead>
-          <EmployeeRows employees={employees} columns={months} by="byMonth" />
+          <EmployeeRows employees={employees} columns={months} by="byMonth" linkCustomers={isAdmin} />
           <tfoot>
             <tr>
               <th scope="row">Total</th>
@@ -80,7 +93,7 @@ export default function SummaryPage() {
               <th scope="col" className="num">Total</th>
             </tr>
           </thead>
-          <EmployeeRows employees={employees} columns={years} by="byYear" />
+          <EmployeeRows employees={employees} columns={years} by="byYear" linkCustomers={isAdmin} />
           <tfoot>
             <tr>
               <th scope="row">Total</th>
@@ -96,7 +109,7 @@ export default function SummaryPage() {
 }
 
 // One row per employee; clicking the name drills down into their pay by customer.
-function EmployeeRows({ employees, columns, by }) {
+function EmployeeRows({ employees, columns, by, linkCustomers }) {
   const [open, setOpen] = useState(() => new Set());
   const toggle = (id) => setOpen((prev) => {
     const next = new Set(prev);
@@ -131,7 +144,7 @@ function EmployeeRows({ employees, columns, by }) {
             </tr>
             {expanded && e.customers.map((c) => (
               <tr key={`${e.id}-${c.id}`} className="drill-row">
-                <th scope="row"><a href={`#/customers/${c.id}`}>{c.name}</a></th>
+                <th scope="row">{linkCustomers ? <a href={`#/customers/${c.id}`}>{c.name}</a> : c.name}</th>
                 {columns.map((col) => <td key={col}><Money value={c[by][col]} /></td>)}
                 <td><Money value={c.total} /></td>
               </tr>

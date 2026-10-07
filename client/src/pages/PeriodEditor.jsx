@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { money, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel } from '../format.js';
+import { money, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel, dayLabel } from '../format.js';
 import { ErrorNote } from '../components/common.jsx';
 
 const CATEGORIES = ['Direct', 'Support', 'Others'];
@@ -22,7 +22,6 @@ const usdFrom = (p) => ({
   rate: p.usd_inr_rate != null ? String(p.usd_inr_rate) : '',
 });
 const round2 = (n) => Math.round(n * 100) / 100;
-const dayLabel = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 
 // Today's USD to INR rate, fetched once per page load and shared by every period.
 let ratePromise = null;

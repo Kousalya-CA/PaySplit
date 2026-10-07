@@ -41,6 +41,17 @@ export const api = {
     create: (name, type, email) => request('/employees', { method: 'POST', body: { name, type, email } }),
     update: (id, body) => request(`/employees/${id}`, { method: 'PATCH', body }),
     remove: (id) => request(`/employees/${id}`, { method: 'DELETE' }),
+    tasks: (id) => request(`/employees/${id}/tasks`),
+  },
+  azdo: {
+    config: () => request('/azdo/config'),
+    saveConfig: (body) => request('/azdo/config', { method: 'PUT', body }),
+    test: () => request('/azdo/test', { method: 'POST' }),
+    addArea: (path) => request('/azdo/areas', { method: 'POST', body: { path } }),
+    removeArea: (id) => request(`/azdo/areas/${id}`, { method: 'DELETE' }),
+    addIteration: (areaId, path) => request(`/azdo/areas/${areaId}/iterations`, { method: 'POST', body: { path } }),
+    refreshIteration: (id) => request(`/azdo/iterations/${id}/refresh`, { method: 'POST' }),
+    removeIteration: (id) => request(`/azdo/iterations/${id}`, { method: 'DELETE' }),
   },
   customers: {
     list: () => request('/customers'),

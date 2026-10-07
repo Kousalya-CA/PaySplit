@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 
-export default function EmployeesPage() {
+// Admins manage everyone. An Employee login sees only their own row (the server filters it).
+export default function EmployeesPage({ isAdmin }) {
   const [employees, setEmployees] = useState(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -52,7 +53,7 @@ export default function EmployeesPage() {
     <section>
       <div className="page-head"><h1>Employees</h1></div>
 
-      <form className="inline-form" onSubmit={add}>
+      {isAdmin && <form className="inline-form" onSubmit={add}>
         <label className="grow">
           <span>New employee</span>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" required />
@@ -70,11 +71,17 @@ export default function EmployeesPage() {
           </select>
         </label>
         <button className="primary" type="submit">Add employee</button>
-      </form>
+      </form>}
       <ErrorNote>{error}</ErrorNote>
 
       {!employees ? <Loading /> : employees.length === 0 ? (
-        <div className="empty"><p>No employees yet. Add the people who can get a share of customer revenue.</p></div>
+        <div className="empty">
+          <p>
+            {isAdmin
+              ? 'No employees yet. Add the people who can get a share of customer revenue.'
+              : 'Your login isn\'t linked to an employee yet. Ask an admin to add your email to your entry on the Employees page.'}
+          </p>
+        </div>
       ) : (
         <div className="table-wrap">
           <table className="grid list">
@@ -86,7 +93,7 @@ export default function EmployeesPage() {
                 <th scope="col">Status</th>
                 <th scope="col" className="num">In splits</th>
                 <th scope="col" className="num">Total earned</th>
-                <th scope="col"><span className="sr-only">Actions</span></th>
+                {isAdmin && <th scope="col"><span className="sr-only">Actions</span></th>}
               </tr>
             </thead>
             <tbody>
@@ -100,7 +107,7 @@ export default function EmployeesPage() {
                         <button className="primary small" type="submit">Save</button>
                         <button className="secondary small" type="button" onClick={() => setEditing(null)}>Cancel</button>
                       </form>
-                    ) : emp.name}
+                    ) : <a href={`#/employees/${emp.id}`}>{emp.name}</a>}
                   </th>
                   <td>
                     {editing?.id === emp.id ? (
@@ -120,26 +127,31 @@ export default function EmployeesPage() {
                   <td>{emp.active ? 'Active' : 'Inactive'}</td>
                   <td className="num">{emp.split_count}</td>
                   <td><Money value={emp.total_pay} /></td>
-                  <td className="row-actions">
-                    {editing?.id !== emp.id && (
-                      <>
-                        <button className="link" onClick={() => setEditing({ id: emp.id, name: emp.name, email: emp.email || '', type: emp.type })}>Edit</button>
-                        <button className="link" onClick={() => toggleActive(emp)}>{emp.active ? 'Mark inactive' : 'Mark active'}</button>
-                        {emp.split_count === 0 && <button className="link danger" onClick={() => remove(emp)}>Delete</button>}
-                      </>
-                    )}
-                  </td>
+                  {isAdmin && (
+                    <td className="row-actions">
+                      {editing?.id !== emp.id && (
+                        <>
+                          <button className="link" onClick={() => setEditing({ id: emp.id, name: emp.name, email: emp.email || '', type: emp.type })}>Edit</button>
+                          <button className="link" onClick={() => toggleActive(emp)}>{emp.active ? 'Mark inactive' : 'Mark active'}</button>
+                          {emp.split_count === 0 && <button className="link danger" onClick={() => remove(emp)}>Delete</button>}
+                        </>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      <p className="muted small">
-        Each employee's email should be the one they use on the Azure DevOps sprint board.
-        Inactive employees keep their pay history but no longer appear when you add contributors.
-        Employees who are already part of a split can't be deleted.
-      </p>
+      {isAdmin ? (
+        <p className="muted small">
+          Each employee's email should be the one they use on the Azure DevOps sprint board and to log in
+          to PaySplit: an Employee login sees only the employee with the same email.
+          Inactive employees keep their pay history but no longer appear when you add contributors.
+          Employees who are already part of a split can't be deleted.
+        </p>
+      ) : <p className="muted small">Click your name to see your Azure DevOps tasks.</p>}
     </section>
   );
 }

@@ -4,7 +4,8 @@ import { monthLabel, pct } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 
 // Same as the "All Payments" sheet: one row per employee per category per period.
-export default function PaymentsPage() {
+// An Employee login gets only their own rows (the server filters them).
+export default function PaymentsPage({ isAdmin }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
   const [filters, setFilters] = useState({ customer: '', employee: '', year: '' });
@@ -41,13 +42,19 @@ export default function PaymentsPage() {
   return (
     <section>
       <div className="page-head">
-        <h1>All payments</h1>
+        <h1>{isAdmin ? 'All payments' : 'My payments'}</h1>
         {rows?.length > 0 && <button className="secondary" onClick={exportCsv}>Download CSV</button>}
       </div>
       <ErrorNote>{error}</ErrorNote>
 
       {!rows ? <Loading /> : rows.length === 0 ? (
-        <div className="empty"><p>No payments yet. Open a customer, enter revenue and add contributors to see them here.</p></div>
+        <div className="empty">
+          <p>
+            {isAdmin
+              ? 'No payments yet. Open a customer, enter revenue and add contributors to see them here.'
+              : 'No payments for you yet. If you expected some, ask an admin to check your email on the Employees page matches your login.'}
+          </p>
+        </div>
       ) : (
         <>
           <div className="filters">
@@ -57,12 +64,14 @@ export default function PaymentsPage() {
                 {options.customers.map((c) => <option key={c}>{c}</option>)}
               </select>
             </label>
-            <label><span>Employee</span>
-              <select value={filters.employee} onChange={setFilter('employee')}>
-                <option value="">All employees</option>
-                {options.employees.map((c) => <option key={c}>{c}</option>)}
-              </select>
-            </label>
+            {isAdmin && (
+              <label><span>Employee</span>
+                <select value={filters.employee} onChange={setFilter('employee')}>
+                  <option value="">All employees</option>
+                  {options.employees.map((c) => <option key={c}>{c}</option>)}
+                </select>
+              </label>
+            )}
             <label><span>Year</span>
               <select value={filters.year} onChange={setFilter('year')}>
                 <option value="">All years</option>
@@ -89,7 +98,7 @@ export default function PaymentsPage() {
                 {visible.map((r) => (
                   <tr key={r.id}>
                     <td>{monthLabel(r.start_month)}</td>
-                    <td><a href={`#/customers/${r.customer_id}`}>{r.customer}</a></td>
+                    <td>{isAdmin ? <a href={`#/customers/${r.customer_id}`}>{r.customer}</a> : r.customer}</td>
                     <td>{r.category}</td>
                     <th scope="row">{r.employee}</th>
                     <td><Money value={r.revenue} /></td>

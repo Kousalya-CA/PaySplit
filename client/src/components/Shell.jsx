@@ -5,13 +5,17 @@ import CustomerDetail from '../pages/CustomerDetail.jsx';
 import EmployeesPage from '../pages/EmployeesPage.jsx';
 import PaymentsPage from '../pages/PaymentsPage.jsx';
 import UsersPage, { roleLabel } from '../pages/UsersPage.jsx';
+import EmployeeDetail from '../pages/EmployeeDetail.jsx';
+import AzureDevOpsPage from '../pages/AzureDevOpsPage.jsx';
 
+// Employee logins see only Summary, Employees and All payments, each with just their own data.
 const NAV = [
   ['summary', 'Summary'],
-  ['customers', 'Customers'],
+  ['customers', 'Customers', { admin: true }],
   ['employees', 'Employees'],
   ['payments', 'All payments'],
   ['users', 'Users', { admin: true }],
+  ['azure-devops', 'Azure DevOps', { admin: true }],
 ];
 
 export default function Shell({ user, onLogout }) {
@@ -19,12 +23,14 @@ export default function Shell({ user, onLogout }) {
   const isAdmin = user.role === 'admin';
 
   let page;
-  if (section === 'customers' && id) page = <CustomerDetail key={id} id={Number(id)} />;
-  else if (section === 'customers') page = <CustomersPage />;
-  else if (section === 'employees') page = <EmployeesPage />;
-  else if (section === 'payments') page = <PaymentsPage />;
+  if (section === 'customers' && id && isAdmin) page = <CustomerDetail key={id} id={Number(id)} />;
+  else if (section === 'customers' && isAdmin) page = <CustomersPage />;
+  else if (section === 'employees' && id) page = <EmployeeDetail key={id} id={Number(id)} />;
+  else if (section === 'employees') page = <EmployeesPage isAdmin={isAdmin} />;
+  else if (section === 'azure-devops' && isAdmin) page = <AzureDevOpsPage />;
+  else if (section === 'payments') page = <PaymentsPage isAdmin={isAdmin} />;
   else if (section === 'users' && isAdmin) page = <UsersPage me={user} />;
-  else page = <SummaryPage />;
+  else page = <SummaryPage isAdmin={isAdmin} />;
 
   return (
     <div className="app">
