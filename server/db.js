@@ -162,6 +162,13 @@ if (customerColumns.has('direct_pct')) {
 const shareColumns = new Set(db.prepare('PRAGMA table_info(shares)').all().map((c) => c.name));
 if (!shareColumns.has('payment_month')) db.exec('ALTER TABLE shares ADD COLUMN payment_month TEXT');
 
+// A period's revenue can be worked out from a total in US dollars:
+// revenue (₹) = total_usd x usd_pct x usd_inr_rate. NULL when the ₹ revenue was typed in directly.
+const periodColumns = new Set(db.prepare('PRAGMA table_info(periods)').all().map((c) => c.name));
+for (const col of ['total_usd', 'usd_pct', 'usd_inr_rate']) {
+  if (!periodColumns.has(col)) db.exec(`ALTER TABLE periods ADD COLUMN ${col} REAL`);
+}
+
 // Every share now has a To month (the customer's periods are the payments inside its shares).
 // Shares saved as ongoing end at the last period they already cover, or after 12 months.
 db.exec(`

@@ -15,11 +15,26 @@ const rowsFrom = (allocations) => Object.fromEntries(CATEGORIES.map((cat) => [
 // Weightage as a fraction: the exact stored value if the row wasn't retyped, otherwise what was typed.
 const fractionOf = (row) => (row.exact != null ? row.exact : parseNum(row.weightage) / 100);
 
+// Revenue from a US dollar total: Total revenue ($) x % x USD to INR rate. 10% by default.
+const usdFrom = (p) => ({
+  total: p.total_usd != null ? String(p.total_usd) : '',
+  pct: p.usd_pct != null ? toPctInput(p.usd_pct) : '10',
+  rate: p.usd_inr_rate != null ? String(p.usd_inr_rate) : '',
+});
+const round2 = (n) => Math.round(n * 100) / 100;
+const dayLabel = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+// Today's USD to INR rate, fetched once per page load and shared by every period.
+let ratePromise = null;
+const todaysRate = () => (ratePromise ||= api.exchangeRate().catch((err) => { ratePromise = null; throw err; }));
+
 // Edits one period: revenue plus the contributors in Direct, Support and Others.
 // Pay = Revenue x Category % x Weightage %, recalculated as you type.
 export default function PeriodEditor({ customer, period, prev, employees, onSaved, onDirtyChange }) {
   const label = periodLabel(period);
   const [revenue, setRevenue] = useState(String(period.revenue));
+  const [usd, setUsd] = useState(() => usdFrom(period));
+  const [today, setToday] = useState(null); // { rate, date } or { error }
   const [rows, setRows] = useState(() => rowsFrom(period.allocations));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -28,9 +43,21 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
 
+  // Fill in today's rate unless this payment was already saved with one.
+  useEffect(() => {
+    let live = true;
+    todaysRate()
+      .then((info) => { if (!live) return; setToday(info); setUsd((u) => (u.rate ? u : { ...u, rate: String(info.rate) })); })
+      .catch((err) => { if (live) setToday({ error: err.message }); });
+    return () => { live = false; };
+  }, []);
+
   const change = (fn) => { fn(); setDirty(true); setNotice(''); };
 
-  const rev = parseNum(revenue);
+  // With a dollar total, the ₹ revenue is worked out from it; otherwise it's typed in.
+  const usdOn = usd.total.trim() !== '';
+  const usdRevenue = round2(parseNum(usd.total) * (parseNum(usd.pct) / 100) * parseNum(usd.rate));
+  const rev = usdOn ? usdRevenue : parseNum(revenue);
   const revValue = Number.isFinite(rev) ? rev : 0;
   // The revenue share covering this period. With none, every category gets 0%.
   const share = period.share;
@@ -56,10 +83,23 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   }));
 
   const copyPrevious = () => change(() => setRows(rowsFrom(prev.allocations)));
-  const discard = () => { setRevenue(String(period.revenue)); setRows(rowsFrom(period.allocations)); setDirty(false); setError(''); };
+  const discard = () => {
+    setRevenue(String(period.revenue));
+    const saved = usdFrom(period);
+    setUsd(saved.rate || !today?.rate ? saved : { ...saved, rate: String(today.rate) });
+    setRows(rowsFrom(period.allocations));
+    setDirty(false);
+    setError('');
+  };
 
   const save = async () => {
     setError('');
+    if (usdOn) {
+      const [t, p, r] = [parseNum(usd.total), parseNum(usd.pct), parseNum(usd.rate)];
+      if (!Number.isFinite(t) || t < 0) return setError('Enter the total revenue in dollars as a number, for example 12000.');
+      if (!Number.isFinite(p) || p < 0 || p > 100) return setError('The percentage of total revenue must be between 0 and 100.');
+      if (!Number.isFinite(r) || r <= 0) return setError('Enter the USD to INR rate, for example 83.5.');
+    }
     if (!Number.isFinite(rev) || rev < 0) return setError('Enter the revenue as a number, for example 10000.');
     const allocations = [];
     for (const cat of CATEGORIES) {
@@ -73,7 +113,13 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     }
     setSaving(true);
     try {
-      const updated = await api.periods.save(period.id, { revenue: rev, allocations });
+      const updated = await api.periods.save(period.id, {
+        revenue: rev,
+        total_usd: usdOn ? parseNum(usd.total) : null,
+        usd_pct: usdOn ? parseNum(usd.pct) / 100 : null,
+        usd_inr_rate: usdOn ? parseNum(usd.rate) : null,
+        allocations,
+      });
       setDirty(false);
       setNotice(`Saved ${label}.`);
       onSaved(updated);
@@ -112,10 +158,54 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
           <span>{wording.revenue}</span>
           <span className="prefix-input">
             <span aria-hidden="true">₹</span>
-            <input inputMode="decimal" value={revenue} onChange={(e) => change(() => setRevenue(e.target.value))} />
+            <input inputMode="decimal" readOnly={usdOn}
+              value={usdOn ? (Number.isFinite(usdRevenue) ? usdRevenue.toFixed(2) : '') : revenue}
+              onChange={(e) => change(() => setRevenue(e.target.value))} />
           </span>
         </label>
       </div>
+
+      <fieldset className="usd-calc">
+        <legend>Revenue from a total in US dollars</legend>
+        <div className="row">
+          <label>
+            <span>Total revenue</span>
+            <span className="prefix-input">
+              <span aria-hidden="true">$</span>
+              <input inputMode="decimal" value={usd.total} placeholder="Leave empty to type ₹ revenue"
+                onChange={(e) => change(() => setUsd({ ...usd, total: e.target.value }))} />
+            </span>
+          </label>
+          <label>
+            <span>Percentage of total</span>
+            <span className="suffix-input">
+              <input inputMode="decimal" value={usd.pct} onChange={(e) => change(() => setUsd({ ...usd, pct: e.target.value }))} />
+              <span aria-hidden="true">%</span>
+            </span>
+          </label>
+          <label>
+            <span>USD to INR rate</span>
+            <span className="prefix-input">
+              <span aria-hidden="true">₹</span>
+              <input inputMode="decimal" value={usd.rate} onChange={(e) => change(() => setUsd({ ...usd, rate: e.target.value }))} />
+            </span>
+          </label>
+        </div>
+        <p className="muted small">
+          {usdOn && Number.isFinite(usdRevenue)
+            ? <>${usd.total} × {usd.pct}% × ₹{usd.rate} = <strong>{money(usdRevenue)}</strong>, filled in as {wording.revenue.toLowerCase()}. </>
+            : 'Enter the total revenue in dollars to work out the ₹ revenue, or leave it empty and type the ₹ revenue above. '}
+          {today?.rate && (
+            <>
+              Today's rate: ₹{today.rate} per $1 ({dayLabel(today.date)}, European Central Bank).
+              {usd.rate !== String(today.rate) && (
+                <> <button type="button" className="link" onClick={() => change(() => setUsd({ ...usd, rate: String(today.rate) }))}>Use today's rate</button></>
+              )}
+            </>
+          )}
+          {today?.error && <span className="warn-text">{today.error}</span>}
+        </p>
+      </fieldset>
 
       <div className="categories">
         {CATEGORIES.map((cat) => (

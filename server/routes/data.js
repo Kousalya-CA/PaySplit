@@ -13,6 +13,7 @@ export const FREQUENCIES = {
   'Three Years': { step: 36 },
 };
 const MAX_PERIODS = 600;
+let rateCache = null; // { fetchedAt, value } for /api/exchange-rate
 
 export function addMonths(ym, n) {
   const [y, m] = ym.split('-').map(Number);
@@ -69,7 +70,7 @@ const q = {
   periodsFor: db.prepare('SELECT * FROM periods WHERE customer_id = ? ORDER BY start_month'),
   period: db.prepare('SELECT * FROM periods WHERE id = ?'),
   insertPeriod: db.prepare('INSERT INTO periods (customer_id, start_month, revenue) VALUES (?, ?, ?)'),
-  updatePeriod: db.prepare('UPDATE periods SET revenue = ? WHERE id = ?'),
+  updatePeriod: db.prepare('UPDATE periods SET revenue = ?, total_usd = ?, usd_pct = ?, usd_inr_rate = ? WHERE id = ?'),
   deletePeriod: db.prepare('DELETE FROM periods WHERE id = ?'),
   periodHasData: db.prepare(`
     SELECT p.revenue <> 0 OR EXISTS (SELECT 1 FROM allocations a WHERE a.period_id = p.id) AS has_data
@@ -378,13 +379,46 @@ export function registerDataRoutes(router) {
     q.deleteCustomer.run(params.id);
   });
 
+  // Today's USD to INR rate (European Central Bank reference rate via frankfurter.dev, no key
+  // needed), cached for an hour. The period editor fills it in; it can still be changed by hand.
+  router.get('/api/exchange-rate', async () => {
+    if (rateCache && Date.now() - rateCache.fetchedAt < 60 * 60 * 1000) return rateCache.value;
+    try {
+      const res = await fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=INR', { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const rate = Number(data?.rates?.INR);
+      if (!Number.isFinite(rate) || rate <= 0) throw new Error('no INR rate');
+      rateCache = { fetchedAt: Date.now(), value: { rate, date: data.date, source: 'European Central Bank (frankfurter.dev)' } };
+      return rateCache.value;
+    } catch {
+      throw new HttpError(502, "Couldn't get today's USD to INR rate. Type the rate in yourself.");
+    }
+  });
+
   // Periods are created and removed by the customer's revenue shares (saveShares).
   // Save a period: revenue plus the full list of contributors (replaces the old list).
   router.put('/api/periods/:id', ({ params, body }) => {
     const period = q.period.get(params.id);
     if (!period) throw new HttpError(404, 'Period not found.');
-    const revenue = toNumber(body.revenue, 'Revenue');
-    if (revenue < 0) throw new HttpError(400, 'Revenue cannot be negative.');
+    // Revenue is either typed in ₹, or worked out from a US dollar total:
+    // Total revenue ($) x % x USD to INR rate, rounded to paise.
+    let revenue;
+    let usd = { total: null, pct: null, rate: null };
+    if (body.total_usd != null && body.total_usd !== '') {
+      usd = {
+        total: toNumber(body.total_usd, 'Total revenue ($)'),
+        pct: toNumber(body.usd_pct, 'Percentage of total revenue'),
+        rate: toNumber(body.usd_inr_rate, 'USD to INR rate'),
+      };
+      if (usd.total < 0) throw new HttpError(400, 'Total revenue ($) cannot be negative.');
+      if (usd.pct < 0 || usd.pct > 1) throw new HttpError(400, 'The percentage of total revenue must be between 0% and 100%.');
+      if (usd.rate <= 0) throw new HttpError(400, 'The USD to INR rate must be more than 0.');
+      revenue = Math.round(usd.total * usd.pct * usd.rate * 100) / 100;
+    } else {
+      revenue = toNumber(body.revenue, 'Revenue');
+      if (revenue < 0) throw new HttpError(400, 'Revenue cannot be negative.');
+    }
     const list = Array.isArray(body.allocations) ? body.allocations : [];
 
     const seen = new Set();
@@ -409,7 +443,7 @@ export function registerDataRoutes(router) {
     }
 
     transaction(() => {
-      q.updatePeriod.run(revenue, params.id);
+      q.updatePeriod.run(revenue, usd.total, usd.pct, usd.rate, params.id);
       q.clearAllocations.run(params.id);
       for (const r of rows) q.insertAllocation.run(params.id, r.category, r.employee_id, r.weightage);
     });

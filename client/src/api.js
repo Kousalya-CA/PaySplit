@@ -52,6 +52,7 @@ export const api = {
   periods: {
     save: (id, body) => request(`/periods/${id}`, { method: 'PUT', body }),
   },
+  exchangeRate: () => request('/exchange-rate'),
   payments: () => request('/payments'),
   summary: () => request('/summary'),
 };
