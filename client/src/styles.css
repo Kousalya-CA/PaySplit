@@ -277,10 +277,12 @@ tr.inactive th, tr.inactive td { color: var(--muted); }
 .azdo-area h3 { margin: 0; }
 .azdo-area p { margin: .2rem 0 0; }
 .azdo-area-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
-.azdo-sprint { border-top: 2px solid var(--line); padding-top: .9rem; display: grid; gap: .8rem; }
-.azdo-sprint h4 { margin: 0; font-size: 1.05rem; }
-.azdo-story { display: grid; gap: .4rem; }
-.azdo-story-title { margin: 0; font-weight: 700; }
+.wi-month { display: grid; gap: .6rem; margin-top: 1rem; }
+.wi-month p { margin: 0; }
+.wi-table .wi-parent th, .wi-table .wi-parent td { font-weight: 700; background: var(--paper); }
+.wi-table .wi-child th { padding-left: 2rem; font-weight: 400; }
+.wi-table .wi-child th::before { content: '↳ '; color: var(--muted); }
+.wi-table .wi-other th, .wi-table .wi-other td { color: var(--muted); }
 
 .categories { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1.5rem; }
 .category { border: 2px solid var(--line); border-top-width: 6px; border-radius: .8rem; padding: 1rem .8rem; display: flex; flex-direction: column; gap: .6rem; min-width: 0; }

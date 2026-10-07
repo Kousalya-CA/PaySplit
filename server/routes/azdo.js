@@ -1,12 +1,13 @@
 // Azure DevOps sprint board: settings (organisation, project, area paths and their sprints) and
-// each employee's tasks, found by their email and grouped under the parent User Story.
+// each employee's work by month, found by their email: User Stories and Issues with their child
+// Tasks and Bugs.
 // The PAT is read from the AZ_PAT environment variable only; it's never stored or sent to the browser.
 import { db } from '../db.js';
 import { HttpError } from '../http.js';
 import { isAdmin, myEmployeeId } from './data.js';
 
 const API_VERSION = '7.1';
-const BATCH = 200; // work items per workitemsbatch call (the API's limit)
+const BATCH = 200; // work items per call (the API's limit)
 
 const q = {
   setting: db.prepare('SELECT value FROM azdo_settings WHERE key = ?'),
@@ -113,13 +114,11 @@ function configView() {
   };
 }
 
-// Fetch work items by id in batches, with the given fields.
-async function workItems(s, ids, fields) {
+// Fetch work items with all their fields and their links (for a parent's child tasks and bugs).
+async function workItemsWithLinks(s, ids) {
   const items = [];
   for (let i = 0; i < ids.length; i += BATCH) {
-    const data = await azFetch(s, 'wit/workitemsbatch', {
-      method: 'POST', body: { ids: ids.slice(i, i + BATCH), fields, errorPolicy: 'Omit' },
-    });
+    const data = await azFetch(s, `wit/workitems?ids=${ids.slice(i, i + BATCH).join(',')}&$expand=relations&errorPolicy=omit`);
     items.push(...(data?.value || []).filter(Boolean));
   }
   return items;
@@ -127,26 +126,68 @@ async function workItems(s, ids, fields) {
 
 const F = {
   title: 'System.Title', state: 'System.State', type: 'System.WorkItemType', area: 'System.AreaPath',
-  iteration: 'System.IterationPath', parent: 'System.Parent',
+  iteration: 'System.IterationPath', parent: 'System.Parent', assignedTo: 'System.AssignedTo',
   original: 'Microsoft.VSTS.Scheduling.OriginalEstimate',
   completed: 'Microsoft.VSTS.Scheduling.CompletedWork',
   remaining: 'Microsoft.VSTS.Scheduling.RemainingWork',
 };
+const PARENT_TYPES = ['User Story', 'Issue'];
+const CHILD_TYPES = ['Task', 'Bug'];
 
-// The configured path a work item belongs to: the longest configured path it's under.
-const underPath = (itemPath, path) => {
-  const a = String(itemPath || '').toLowerCase();
-  const b = path.toLowerCase();
-  return a === b || a.startsWith(`${b}\\`);
-};
-const bestMatch = (itemPath, list) =>
-  list.filter((x) => underPath(itemPath, x.path)).sort((x, y) => y.path.length - x.path.length)[0];
+// The reference name of the custom field called "Client" (e.g. Custom.Client), looked up once per
+// project. null if the project has no such field.
+const clientFieldCache = new Map();
+async function clientField(s) {
+  const key = `${s.org}/${s.project}`;
+  if (!clientFieldCache.has(key)) {
+    const data = await azFetch(s, 'wit/fields');
+    const field = (data?.value || []).find((f) => f.name?.toLowerCase() === 'client')
+      || (data?.value || []).find((f) => /\.client$/i.test(f.referenceName || ''));
+    clientFieldCache.set(key, field?.referenceName || null);
+  }
+  return clientFieldCache.get(key);
+}
 
-const sumHours = (tasks) => ({
-  original: tasks.reduce((n, t) => n + (t.original || 0), 0),
-  completed: tasks.reduce((n, t) => n + (t.completed || 0), 0),
-  remaining: tasks.reduce((n, t) => n + (t.remaining || 0), 0),
-});
+// One table row from a work item.
+function toRow(s, w, client, mine) {
+  const f = w.fields || {};
+  const assigned = f[F.assignedTo];
+  const assignedEmail = String(assigned?.uniqueName || '').toLowerCase();
+  const clientValue = client ? f[client] : null;
+  return {
+    id: w.id,
+    type: f[F.type],
+    title: f[F.title],
+    state: f[F.state],
+    areaPath: f[F.area],
+    iterationPath: f[F.iteration],
+    client: clientValue == null ? '' : typeof clientValue === 'object' ? clientValue.displayName ?? '' : String(clientValue),
+    assignedTo: assigned?.displayName || '',
+    mine: assignedEmail === mine,
+    original: f[F.original] ?? null,
+    completed: f[F.completed] ?? null,
+    remaining: f[F.remaining] ?? null,
+    url: `https://dev.azure.com/${encodeURIComponent(s.org)}/${encodeURIComponent(s.project)}/_workitems/edit/${w.id}`,
+  };
+}
+
+const childIdsOf = (w) => (w.relations || [])
+  .filter((r) => r.rel === 'System.LinkTypes.Hierarchy-Forward')
+  .map((r) => Number(String(r.url).split('/').pop()))
+  .filter(Number.isFinite);
+
+// Sprints grouped by the month they start in ('2026-10'), or 'undated' when Azure DevOps has no dates.
+function sprintMonths(areas) {
+  const months = new Map();
+  for (const a of areas) {
+    for (const it of a.iterations) {
+      const key = it.start_date ? it.start_date.slice(0, 7) : 'undated';
+      if (!months.has(key)) months.set(key, { month: key, sprints: [] });
+      months.get(key).sprints.push({ id: it.id, name: it.name, path: it.path, start_date: it.start_date, finish_date: it.finish_date, area: a.name, areaPath: a.path });
+    }
+  }
+  return [...months.values()].sort((x, y) => (x.month === 'undated' ? 1 : y.month === 'undated' ? -1 : y.month.localeCompare(x.month)));
+}
 
 export function registerAzdoRoutes(router) {
   const admin = { admin: true };
@@ -221,12 +262,16 @@ export function registerAzdoRoutes(router) {
     return configView();
   }, admin);
 
-  // One employee's tasks in every configured area and sprint, grouped under their User Story.
-  // Admins can open anyone's; an Employee login only its own.
-  router.get('/api/employees/:id/tasks', async ({ params, user }) => {
+  // An employee's Azure DevOps work. Admins can open anyone's; an Employee login only its own.
+  // Without ?month= it returns the months that have sprints (newest first). With ?month=2026-10
+  // it returns one table for every area path's sprints starting that month: each User Story or
+  // Issue with its child Tasks and Bugs below it. A parent is listed when the employee has a task
+  // or bug under it (even if the parent is someone else's) or when the parent is theirs, in which
+  // case all its children are listed.
+  router.get('/api/employees/:id/tasks', async ({ params, user, req }) => {
     const employee = q.employee.get(params.id);
     if (!employee || (!isAdmin(user) && myEmployeeId(user) !== employee.id)) throw new HttpError(404, 'Employee not found.');
-    const result = { employee: { ...employee, active: Boolean(employee.active) }, areas: [] };
+    const result = { employee: { ...employee, active: Boolean(employee.active) }, months: [] };
     if (!employee.email) return { ...result, message: `Add ${employee.name}'s email on the Employees page to see their Azure DevOps tasks.` };
 
     const s = settings();
@@ -235,62 +280,72 @@ export function registerAzdoRoutes(router) {
     if (!s.org || !s.project || !areas.some((a) => a.iterations.length)) {
       return { ...result, message: 'Azure DevOps isn\'t set up yet. An admin can add area paths and sprints on the Azure DevOps page.' };
     }
+    result.months = sprintMonths(areas);
+    const month = new URL(req.url, 'http://x').searchParams.get('month');
+    if (!month) return result;
+    const chosen = result.months.find((m) => m.month === month);
+    if (!chosen) throw new HttpError(404, 'There are no sprints for that month.');
     requireSettings();
 
-    // One query for every area and its sprints.
-    const clauses = areas.filter((a) => a.iterations.length).map((a) =>
-      `([System.AreaPath] UNDER '${esc(a.path)}' AND (${a.iterations.map((i) => `[System.IterationPath] UNDER '${esc(i.path)}'`).join(' OR ')}))`);
+    // Everything assigned to the employee in these area paths and sprints.
+    const pairs = chosen.sprints.map((sp) =>
+      `([System.AreaPath] UNDER '${esc(sp.areaPath)}' AND [System.IterationPath] UNDER '${esc(sp.path)}')`);
+    const types = [...PARENT_TYPES, ...CHILD_TYPES].map((t) => `'${t}'`).join(', ');
     const query = `SELECT [System.Id] FROM WorkItems
-      WHERE [System.TeamProject] = @project AND [System.WorkItemType] = 'Task'
-        AND [System.AssignedTo] = '${esc(employee.email)}' AND (${clauses.join(' OR ')})
+      WHERE [System.TeamProject] = @project AND [System.WorkItemType] IN (${types})
+        AND [System.AssignedTo] = '${esc(employee.email)}' AND (${pairs.join(' OR ')})
       ORDER BY [System.Id]`;
     const found = await azFetch(s, 'wit/wiql', { method: 'POST', body: { query } });
-    const ids = (found?.workItems || []).map((w) => w.id);
+    const assignedIds = (found?.workItems || []).map((w) => w.id);
 
-    const tasks = (await workItems(s, ids, ['System.Id', ...Object.values(F)])).map((w) => ({
-      id: w.id,
-      title: w.fields[F.title],
-      state: w.fields[F.state],
-      areaPath: w.fields[F.area],
-      iterationPath: w.fields[F.iteration],
-      parentId: w.fields[F.parent] ?? null,
-      original: w.fields[F.original] ?? null,
-      completed: w.fields[F.completed] ?? null,
-      remaining: w.fields[F.remaining] ?? null,
-      url: `https://dev.azure.com/${encodeURIComponent(s.org)}/${encodeURIComponent(s.project)}/_workitems/edit/${w.id}`,
-    }));
-    const parentIds = [...new Set(tasks.map((t) => t.parentId).filter(Boolean))];
-    const parents = new Map((await workItems(s, parentIds, ['System.Id', F.title, F.state, F.type]))
-      .map((w) => [w.id, { id: w.id, title: w.fields[F.title], state: w.fields[F.state], type: w.fields[F.type] }]));
+    const client = await clientField(s);
+    const mine = employee.email.toLowerCase();
+    const items = new Map((await workItemsWithLinks(s, assignedIds)).map((w) => [w.id, w]));
 
-    result.areas = areas.map((a) => ({
-      id: a.id, path: a.path, name: a.name,
-      sprints: a.iterations.map((it) => {
-        const mine = tasks.filter((t) => bestMatch(t.areaPath, areas)?.id === a.id
-          && bestMatch(t.iterationPath, a.iterations)?.id === it.id);
-        const stories = new Map();
-        for (const t of mine) {
-          const key = t.parentId || 0;
-          if (!stories.has(key)) {
-            const p = parents.get(t.parentId);
-            stories.set(key, {
-              id: p?.id ?? null,
-              title: p ? p.title : 'No user story',
-              type: p?.type ?? null,
-              state: p?.state ?? null,
-              url: p ? `https://dev.azure.com/${encodeURIComponent(s.org)}/${encodeURIComponent(s.project)}/_workitems/edit/${p.id}` : null,
-              tasks: [],
-            });
-          }
-          stories.get(key).tasks.push(t);
-        }
-        const list = [...stories.values()].map((st) => ({ ...st, hours: sumHours(st.tasks) }));
-        return {
-          id: it.id, path: it.path, name: it.name, start_date: it.start_date, finish_date: it.finish_date,
-          stories: list, taskCount: mine.length, hours: sumHours(mine),
-        };
-      }),
-    }));
-    return result;
+    // Parents: User Stories / Issues assigned to the employee, and the parents of their tasks and bugs.
+    const parentIds = new Set();
+    for (const w of items.values()) {
+      if (PARENT_TYPES.includes(w.fields[F.type])) parentIds.add(w.id);
+      else if (w.fields[F.parent]) parentIds.add(w.fields[F.parent]);
+    }
+    const missing = [...parentIds].filter((id) => !items.has(id));
+    for (const w of await workItemsWithLinks(s, missing)) items.set(w.id, w);
+
+    // Children of the employee's own User Stories / Issues, whoever they're assigned to.
+    const ownParents = [...parentIds].map((id) => items.get(id))
+      .filter((w) => w && String(w.fields[F.assignedTo]?.uniqueName || '').toLowerCase() === mine);
+    const childIds = [...new Set(ownParents.flatMap(childIdsOf))].filter((id) => !items.has(id));
+    for (const w of await workItemsWithLinks(s, childIds)) items.set(w.id, w);
+
+    // Build the table: each parent, then its children; then tasks and bugs with no parent.
+    const rows = [];
+    const shown = new Set();
+    const parents = [...parentIds].map((id) => items.get(id)).filter((w) => w && PARENT_TYPES.includes(w.fields[F.type]));
+    parents.sort((a, b) => String(a.fields[F.area]).localeCompare(String(b.fields[F.area])) || a.id - b.id);
+    for (const p of parents) {
+      const own = String(p.fields[F.assignedTo]?.uniqueName || '').toLowerCase() === mine;
+      const kids = childIdsOf(p).map((id) => items.get(id))
+        .filter((w) => w && (own || String(w.fields[F.assignedTo]?.uniqueName || '').toLowerCase() === mine))
+        .sort((a, b) => a.id - b.id);
+      rows.push({ ...toRow(s, p, client, mine), level: 0, childCount: kids.length });
+      shown.add(p.id);
+      for (const k of kids) {
+        rows.push({ ...toRow(s, k, client, mine), level: 1, parentId: p.id });
+        shown.add(k.id);
+      }
+    }
+    for (const id of assignedIds) {
+      const w = items.get(id);
+      if (w && !shown.has(id)) rows.push({ ...toRow(s, w, client, mine), level: 0, childCount: 0, noParent: true });
+    }
+
+    // The employee's own hours: their tasks and bugs (not parents, whose hours roll up from tasks).
+    const theirs = rows.filter((r) => r.mine && CHILD_TYPES.includes(r.type));
+    const total = (k) => theirs.reduce((n, r) => n + (r[k] || 0), 0);
+    return {
+      ...result, month, sprints: chosen.sprints, clientField: client, rows,
+      hours: { original: total('original'), completed: total('completed'), remaining: total('remaining') },
+      counts: { parents: parents.length, mine: theirs.length },
+    };
   });
 }
