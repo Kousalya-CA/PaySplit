@@ -283,6 +283,10 @@ tr.inactive th, tr.inactive td { color: var(--muted); }
 .wi-table .wi-child th { padding-left: 2rem; font-weight: 400; }
 .wi-table .wi-child th::before { content: '↳ '; color: var(--muted); }
 .wi-table .wi-other th, .wi-table .wi-other td { color: var(--muted); }
+/* Long titles are cut to one line with "…"; hovering shows the whole title. */
+.wi-table .wi-title { width: clamp(12rem, 26vw, 24rem); max-width: clamp(12rem, 26vw, 24rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wi-filter { display: flex; align-items: center; gap: .5rem; }
+.wi-filter span { font-weight: 600; }
 
 .categories { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1.5rem; }
 .category { border: 2px solid var(--line); border-top-width: 6px; border-radius: .8rem; padding: 1rem .8rem; display: flex; flex-direction: column; gap: .6rem; min-width: 0; }

@@ -92,14 +92,49 @@ export default function EmployeeDetail({ id }) {
 
 const yearOf = (month) => (month === 'undated' ? 'undated' : month.slice(0, 4));
 
+const CHILD_TYPES = ['Task', 'Bug'];
+const NO_CLIENT = '__none__';
+
+// Keep only the rows for one client. A Task or Bug with no client of its own counts as its parent's
+// client, and a parent stays when it or any of its listed children matches.
+function filterByClient(rows, client) {
+  if (!client) return rows;
+  const matches = (value) => (client === NO_CLIENT ? !value : value === client);
+  const parentClient = new Map(rows.filter((r) => !r.level).map((r) => [r.id, r.client]));
+  const childOk = (r) => matches(r.client || parentClient.get(r.parentId));
+  const keepParent = new Set(rows.filter((r) => r.level && childOk(r)).map((r) => r.parentId));
+  return rows.filter((r) => (r.level ? childOk(r) : matches(r.client) || keepParent.has(r.id)));
+}
+
 function MonthTable({ data }) {
-  const { rows, sprints, clientField } = data;
+  const { sprints, clientField } = data;
+  const [client, setClient] = useState('');
+  const clients = [...new Set(data.rows.map((r) => r.client).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const hasBlank = data.rows.some((r) => !r.client);
+  const rows = filterByClient(data.rows, clients.includes(client) || client === NO_CLIENT ? client : '');
+
+  // The employee's own hours over the rows shown: their tasks and bugs, not the parents.
+  const theirs = rows.filter((r) => r.mine && CHILD_TYPES.includes(r.type));
+  const total = (k) => theirs.reduce((n, r) => n + (r[k] || 0), 0);
+
   const sprintNote = sprints.map((sp) => `${sp.area}: ${sp.name}${sp.start_date ? ` (${dayLabel(sp.start_date)} to ${dayLabel(sp.finish_date)})` : ''}`);
   return (
     <div className="wi-month">
       <p className="muted small">{sprintNote.join(' · ')}</p>
-      {rows.length === 0 ? (
+      {clientField && clients.length > 0 && (
+        <label className="wi-filter">
+          <span>Client</span>
+          <select value={client} onChange={(e) => setClient(e.target.value)}>
+            <option value="">All clients</option>
+            {clients.map((c) => <option key={c} value={c}>{c}</option>)}
+            {hasBlank && <option value={NO_CLIENT}>No client</option>}
+          </select>
+        </label>
+      )}
+      {data.rows.length === 0 ? (
         <div className="empty"><p>No work items assigned in these sprints.</p></div>
+      ) : rows.length === 0 ? (
+        <div className="empty"><p>No work items for this client.</p></div>
       ) : (
         <div className="table-wrap">
           <table className="grid list wi-table">
@@ -108,7 +143,7 @@ function MonthTable({ data }) {
                 <th scope="col">Area path</th>
                 {clientField && <th scope="col">Client</th>}
                 <th scope="col">Type</th>
-                <th scope="col">Title</th>
+                <th scope="col" className="wi-title">Title</th>
                 <th scope="col">Status</th>
                 <th scope="col">Assigned to</th>
                 <th scope="col" className="num">Original</th>
@@ -122,7 +157,7 @@ function MonthTable({ data }) {
                   <td className="small" title={r.areaPath}>{r.area}</td>
                   {clientField && <td>{r.client}</td>}
                   <td>{r.type}</td>
-                  <th scope="row">
+                  <th scope="row" className="wi-title" title={`${r.id} ${r.title}`}>
                     <a href={r.url} target="_blank" rel="noreferrer">{r.id}</a> {r.title}
                   </th>
                   <td>{r.state}</td>
@@ -136,11 +171,11 @@ function MonthTable({ data }) {
             <tfoot>
               <tr>
                 <th scope="row" colSpan={clientField ? 6 : 5}>
-                  Their {data.counts.mine} task{data.counts.mine === 1 ? '' : 's'} and bugs (hours)
+                  Their {theirs.length} task{theirs.length === 1 ? '' : 's'} and bugs (hours)
                 </th>
-                <td className="num">{hours(data.hours.original)}</td>
-                <td className="num">{hours(data.hours.completed)}</td>
-                <td className="num">{hours(data.hours.remaining)}</td>
+                <td className="num">{hours(total('original'))}</td>
+                <td className="num">{hours(total('completed'))}</td>
+                <td className="num">{hours(total('remaining'))}</td>
               </tr>
             </tfoot>
           </table>
@@ -148,6 +183,7 @@ function MonthTable({ data }) {
       )}
       <p className="muted small">
         User Stories and Issues are listed with this employee's own Tasks and Bugs below them. A greyed User Story or Issue is assigned to someone else.
+        Hover over a title to see all of it.
         {!clientField && ' No field called "Client" was found in Azure DevOps, so the Client column is hidden.'}
       </p>
     </div>
