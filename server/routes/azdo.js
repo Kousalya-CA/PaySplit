@@ -16,7 +16,8 @@ const q = {
     ON CONFLICT (key) DO UPDATE SET value = excluded.value`),
   areas: db.prepare('SELECT * FROM azdo_areas ORDER BY path'),
   area: db.prepare('SELECT * FROM azdo_areas WHERE id = ?'),
-  insertArea: db.prepare('INSERT INTO azdo_areas (path, name) VALUES (?, ?)'),
+  insertArea: db.prepare('INSERT INTO azdo_areas (path, name, display_name) VALUES (?, ?, ?)'),
+  renameArea: db.prepare('UPDATE azdo_areas SET display_name = ? WHERE id = ?'),
   deleteArea: db.prepare('DELETE FROM azdo_areas WHERE id = ?'),
   iterations: db.prepare('SELECT * FROM azdo_iterations ORDER BY start_date DESC, path'),
   iteration: db.prepare('SELECT * FROM azdo_iterations WHERE id = ?'),
@@ -101,6 +102,12 @@ async function lookupNode(s, kind, input, isTaken = () => false) {
 }
 
 const isUnique = (err) => /UNIQUE constraint failed/i.test(err?.message || '');
+
+function parseDisplayName(value) {
+  const name = String(value ?? '').trim();
+  if (name.length > 60) throw new HttpError(400, 'Keep the display name to 60 characters or fewer.');
+  return name || null;
+}
 const esc = (text) => String(text).replace(/'/g, "''"); // WIQL string literal
 
 function configView() {
@@ -148,8 +155,18 @@ async function clientField(s) {
   return clientFieldCache.get(key);
 }
 
+// The label for a work item's area: the display name (or name) of the configured area path it's
+// under, picking the longest match; otherwise its path without the project name.
+function areaLabel(path, areas) {
+  const p = String(path || '').toLowerCase();
+  const match = areas
+    .filter((a) => p === a.path.toLowerCase() || p.startsWith(`${a.path.toLowerCase()}\\`))
+    .sort((x, y) => y.path.length - x.path.length)[0];
+  return match ? match.display_name || match.name : String(path || '').split('\\').slice(1).join('\\') || path;
+}
+
 // One table row from a work item.
-function toRow(s, w, client, mine) {
+function toRow(s, w, client, mine, areas) {
   const f = w.fields || {};
   const assigned = f[F.assignedTo];
   const assignedEmail = String(assigned?.uniqueName || '').toLowerCase();
@@ -160,6 +177,7 @@ function toRow(s, w, client, mine) {
     title: f[F.title],
     state: f[F.state],
     areaPath: f[F.area],
+    area: areaLabel(f[F.area], areas),
     iterationPath: f[F.iteration],
     client: clientValue == null ? '' : typeof clientValue === 'object' ? clientValue.displayName ?? '' : String(clientValue),
     assignedTo: assigned?.displayName || '',
@@ -183,7 +201,7 @@ function sprintMonths(areas) {
     for (const it of a.iterations) {
       const key = it.start_date ? it.start_date.slice(0, 7) : 'undated';
       if (!months.has(key)) months.set(key, { month: key, sprints: [] });
-      months.get(key).sprints.push({ id: it.id, name: it.name, path: it.path, start_date: it.start_date, finish_date: it.finish_date, area: a.name, areaPath: a.path });
+      months.get(key).sprints.push({ id: it.id, name: it.name, path: it.path, start_date: it.start_date, finish_date: it.finish_date, area: a.display_name || a.name, areaPath: a.path });
     }
   }
   return [...months.values()].sort((x, y) => (x.month === 'undated' ? 1 : y.month === 'undated' ? -1 : y.month.localeCompare(x.month)));
@@ -217,12 +235,19 @@ export function registerAzdoRoutes(router) {
     const taken = (path) => q.areas.all().some((a) => a.path.toLowerCase() === path.toLowerCase());
     const node = await lookupNode(s, 'Areas', body.path, taken);
     try {
-      q.insertArea.run(node.path, node.name);
+      q.insertArea.run(node.path, node.name, parseDisplayName(body.display_name));
     } catch (err) {
       if (isUnique(err)) throw new HttpError(409, `${node.path} is already added.`);
       throw err;
     }
     setStatus(201);
+    return configView();
+  }, admin);
+
+  // The short name shown in the task table. Empty means use the area's own name.
+  router.patch('/api/azdo/areas/:id', ({ params, body }) => {
+    if (!q.area.get(params.id)) throw new HttpError(404, 'Area path not found.');
+    q.renameArea.run(parseDisplayName(body.display_name), params.id);
     return configView();
   }, admin);
 
@@ -265,9 +290,9 @@ export function registerAzdoRoutes(router) {
   // An employee's Azure DevOps work. Admins can open anyone's; an Employee login only its own.
   // Without ?month= it returns the months that have sprints (newest first). With ?month=2026-10
   // it returns one table for every area path's sprints starting that month: each User Story or
-  // Issue with its child Tasks and Bugs below it. A parent is listed when the employee has a task
-  // or bug under it (even if the parent is someone else's) or when the parent is theirs, in which
-  // case all its children are listed.
+  // Issue with the employee's own Tasks and Bugs below it. A parent is listed when it's theirs or
+  // when they have a task or bug under it (even if the parent is someone else's); other people's
+  // tasks and bugs are never listed.
   router.get('/api/employees/:id/tasks', async ({ params, user, req }) => {
     const employee = q.employee.get(params.id);
     if (!employee || (!isAdmin(user) && myEmployeeId(user) !== employee.id)) throw new HttpError(404, 'Employee not found.');
@@ -311,32 +336,27 @@ export function registerAzdoRoutes(router) {
     const missing = [...parentIds].filter((id) => !items.has(id));
     for (const w of await workItemsWithLinks(s, missing)) items.set(w.id, w);
 
-    // Children of the employee's own User Stories / Issues, whoever they're assigned to.
-    const ownParents = [...parentIds].map((id) => items.get(id))
-      .filter((w) => w && String(w.fields[F.assignedTo]?.uniqueName || '').toLowerCase() === mine);
-    const childIds = [...new Set(ownParents.flatMap(childIdsOf))].filter((id) => !items.has(id));
-    for (const w of await workItemsWithLinks(s, childIds)) items.set(w.id, w);
-
-    // Build the table: each parent, then its children; then tasks and bugs with no parent.
+    // Build the table: each parent, then the employee's own tasks and bugs under it (never other
+    // people's); then their tasks and bugs with no parent.
+    const isMine = (w) => String(w.fields[F.assignedTo]?.uniqueName || '').toLowerCase() === mine;
     const rows = [];
     const shown = new Set();
     const parents = [...parentIds].map((id) => items.get(id)).filter((w) => w && PARENT_TYPES.includes(w.fields[F.type]));
     parents.sort((a, b) => String(a.fields[F.area]).localeCompare(String(b.fields[F.area])) || a.id - b.id);
     for (const p of parents) {
-      const own = String(p.fields[F.assignedTo]?.uniqueName || '').toLowerCase() === mine;
       const kids = childIdsOf(p).map((id) => items.get(id))
-        .filter((w) => w && (own || String(w.fields[F.assignedTo]?.uniqueName || '').toLowerCase() === mine))
+        .filter((w) => w && CHILD_TYPES.includes(w.fields[F.type]) && isMine(w))
         .sort((a, b) => a.id - b.id);
-      rows.push({ ...toRow(s, p, client, mine), level: 0, childCount: kids.length });
+      rows.push({ ...toRow(s, p, client, mine, areas), level: 0, childCount: kids.length });
       shown.add(p.id);
       for (const k of kids) {
-        rows.push({ ...toRow(s, k, client, mine), level: 1, parentId: p.id });
+        rows.push({ ...toRow(s, k, client, mine, areas), level: 1, parentId: p.id });
         shown.add(k.id);
       }
     }
     for (const id of assignedIds) {
       const w = items.get(id);
-      if (w && !shown.has(id)) rows.push({ ...toRow(s, w, client, mine), level: 0, childCount: 0, noParent: true });
+      if (w && !shown.has(id)) rows.push({ ...toRow(s, w, client, mine, areas), level: 0, childCount: 0, noParent: true });
     }
 
     // The employee's own hours: their tasks and bugs (not parents, whose hours roll up from tasks).

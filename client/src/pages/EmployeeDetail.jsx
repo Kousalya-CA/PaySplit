@@ -5,8 +5,6 @@ import { dayLabel, monthLabel } from '../format.js';
 
 const hours = (n) => (n ? `${+n.toFixed(2)}` : '–');
 const thisMonth = () => new Date().toISOString().slice(0, 7);
-// 'Trisul.Org\Agentic - Billing\Sub' -> 'Agentic - Billing\Sub' (the project name is the same everywhere).
-const shortPath = (path) => String(path || '').split('\\').slice(1).join('\\') || path;
 
 // One employee's Azure DevOps work: pick a year, then a month (a monthly sprint), then one table for
 // every area path in that month: User Stories and Issues with their child Tasks and Bugs below them.
@@ -121,7 +119,7 @@ function MonthTable({ data }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={`${r.parentId ?? 'top'}-${r.id}`} className={`${r.level ? 'wi-child' : 'wi-parent'}${r.mine ? '' : ' wi-other'}`}>
-                  <td className="small">{shortPath(r.areaPath)}</td>
+                  <td className="small" title={r.areaPath}>{r.area}</td>
                   {clientField && <td>{r.client}</td>}
                   <td>{r.type}</td>
                   <th scope="row">
@@ -149,7 +147,7 @@ function MonthTable({ data }) {
         </div>
       )}
       <p className="muted small">
-        User Stories and Issues are listed with their Tasks and Bugs below them. Greyed rows are assigned to someone else.
+        User Stories and Issues are listed with this employee's own Tasks and Bugs below them. A greyed User Story or Issue is assigned to someone else.
         {!clientField && ' No field called "Client" was found in Azure DevOps, so the Client column is hidden.'}
       </p>
     </div>

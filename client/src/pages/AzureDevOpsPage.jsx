@@ -9,7 +9,8 @@ import { dayLabel } from '../format.js';
 export default function AzureDevOpsPage() {
   const [config, setConfig] = useState(null);
   const [form, setForm] = useState({ org: '', project: '' });
-  const [newArea, setNewArea] = useState('');
+  const [newArea, setNewArea] = useState({ path: '', displayName: '' });
+  const [names, setNames] = useState({}); // areaId -> display name being edited
   const [newSprint, setNewSprint] = useState({}); // areaId -> text
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -82,7 +83,7 @@ export default function AzureDevOpsPage() {
         <div key={a.id} className="panel azdo-area">
           <div className="azdo-area-head">
             <div>
-              <h3>{a.name}</h3>
+              <h3>{a.display_name || a.name}</h3>
               <p className="muted small"><code>{a.path}</code></p>
             </div>
             <button className="link danger" disabled={busy === `area-${a.id}`}
@@ -91,6 +92,23 @@ export default function AzureDevOpsPage() {
               Remove area path
             </button>
           </div>
+
+          <form className="inline-form" onSubmit={(e) => {
+            e.preventDefault();
+            run(`name-${a.id}`, () => api.azdo.renameArea(a.id, names[a.id] ?? a.display_name ?? ''), () => {
+              setNames({ ...names, [a.id]: undefined });
+              setNotice('Display name saved.');
+            });
+          }}>
+            <label className="grow">
+              <span>Display name</span>
+              <input value={names[a.id] ?? a.display_name ?? ''} placeholder={a.name} maxLength={60}
+                onChange={(e) => setNames({ ...names, [a.id]: e.target.value })} />
+            </label>
+            <button className="secondary" type="submit" disabled={busy === `name-${a.id}` || (names[a.id] ?? a.display_name ?? '') === (a.display_name ?? '')}>
+              {busy === `name-${a.id}` ? 'Saving…' : 'Save name'}
+            </button>
+          </form>
 
           {a.iterations.length > 0 ? (
             <div className="table-wrap">
@@ -137,11 +155,19 @@ export default function AzureDevOpsPage() {
       ))}
 
       {saved && (
-        <form className="inline-form" onSubmit={(e) => { e.preventDefault(); run('area', () => api.azdo.addArea(newArea), () => setNewArea('')); }}>
+        <form className="inline-form azdo-add-area" onSubmit={(e) => {
+          e.preventDefault();
+          run('area', () => api.azdo.addArea(newArea.path, newArea.displayName), () => setNewArea({ path: '', displayName: '' }));
+        }}>
           <label className="grow">
             <span>Add area path</span>
-            <input value={newArea} placeholder={`${config.project}\\Agentic - Billing and Data Platform`} required
-              onChange={(e) => setNewArea(e.target.value)} />
+            <input value={newArea.path} placeholder={`${config.project}\\Agentic - Billing and Data Platform`} required
+              onChange={(e) => setNewArea({ ...newArea, path: e.target.value })} />
+          </label>
+          <label>
+            <span>Display name (optional)</span>
+            <input value={newArea.displayName} placeholder="Billing" maxLength={60}
+              onChange={(e) => setNewArea({ ...newArea, displayName: e.target.value })} />
           </label>
           <button className="primary" type="submit" disabled={busy === 'area'}>{busy === 'area' ? 'Checking…' : 'Add area path'}</button>
         </form>

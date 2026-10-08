@@ -184,6 +184,10 @@ if (customerColumns.has('direct_pct')) {
 const shareColumns = new Set(db.prepare('PRAGMA table_info(shares)').all().map((c) => c.name));
 if (!shareColumns.has('payment_month')) db.exec('ALTER TABLE shares ADD COLUMN payment_month TEXT');
 
+// A short name for an Azure DevOps area path, shown in the task table instead of the long path.
+const areaColumns = new Set(db.prepare('PRAGMA table_info(azdo_areas)').all().map((c) => c.name));
+if (!areaColumns.has('display_name')) db.exec('ALTER TABLE azdo_areas ADD COLUMN display_name TEXT');
+
 // A period's revenue can be worked out from a total in US dollars:
 // revenue (₹) = total_usd x usd_pct x usd_inr_rate. NULL when the ₹ revenue was typed in directly.
 const periodColumns = new Set(db.prepare('PRAGMA table_info(periods)').all().map((c) => c.name));

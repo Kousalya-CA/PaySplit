@@ -128,7 +128,7 @@ periods                  id, customer_id, start_month, revenue, total_usd, usd_p
 allocations              id, period_id, category, employee_id, weightage
 payments (view)          every allocation with pay = revenue × category % × weightage
 azdo_settings            key, value (Azure DevOps organisation and project)
-azdo_areas               id, path, name
+azdo_areas               id, path, name, display_name
 azdo_iterations          id, area_id, path, name, start_date, finish_date
 ```
 
