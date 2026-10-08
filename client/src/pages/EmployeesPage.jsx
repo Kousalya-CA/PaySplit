@@ -5,11 +5,12 @@ import { Loading, ErrorNote, Money } from '../components/common.jsx';
 // Admins manage everyone. An Employee login sees only their own row (the server filters it).
 export default function EmployeesPage({ isAdmin }) {
   const [employees, setEmployees] = useState(null);
+  const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [type, setType] = useState('Product');
   const [error, setError] = useState('');
-  const [editing, setEditing] = useState(null); // { id, name, email, type }
+  const [editing, setEditing] = useState(null); // { id, employee_code, name, email, type }
 
   const load = () => api.employees.list().then(setEmployees).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
@@ -18,7 +19,8 @@ export default function EmployeesPage({ isAdmin }) {
     e.preventDefault();
     setError('');
     try {
-      await api.employees.create(name, type, email);
+      await api.employees.create({ employee_code: code, name, type, email });
+      setCode('');
       setName('');
       setEmail('');
       setType('Product');
@@ -30,7 +32,7 @@ export default function EmployeesPage({ isAdmin }) {
     e.preventDefault();
     setError('');
     try {
-      await api.employees.update(editing.id, { name: editing.name, email: editing.email, type: editing.type });
+      await api.employees.update(editing.id, { employee_code: editing.employee_code, name: editing.name, email: editing.email, type: editing.type });
       setEditing(null);
       load();
     } catch (err) { setError(err.message); }
@@ -54,6 +56,10 @@ export default function EmployeesPage({ isAdmin }) {
       <div className="page-head"><h1>Employees</h1></div>
 
       {isAdmin && <form className="inline-form" onSubmit={add}>
+        <label>
+          <span>Employee ID</span>
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="CA1023" maxLength={30} size={10} required />
+        </label>
         <label className="grow">
           <span>New employee</span>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" required />
@@ -87,6 +93,7 @@ export default function EmployeesPage({ isAdmin }) {
           <table className="grid list">
             <thead>
               <tr>
+                <th scope="col">Employee ID</th>
                 <th scope="col">Name</th>
                 <th scope="col">Email</th>
                 <th scope="col">Type</th>
@@ -99,6 +106,12 @@ export default function EmployeesPage({ isAdmin }) {
             <tbody>
               {employees.map((emp) => (
                 <tr key={emp.id} className={emp.active ? '' : 'inactive'}>
+                  <td>
+                    {editing?.id === emp.id ? (
+                      <input aria-label="Employee ID" value={editing.employee_code} placeholder="CA1023" maxLength={30} size={10} form={`edit-${emp.id}`}
+                        required onChange={(e) => setEditing({ ...editing, employee_code: e.target.value })} />
+                    ) : emp.employee_code || (isAdmin ? <span className="warn-text small">Add ID</span> : '–')}
+                  </td>
                   <th scope="row">
                     {editing?.id === emp.id ? (
                       <form className="rename" id={`edit-${emp.id}`} onSubmit={saveName}>
@@ -131,7 +144,7 @@ export default function EmployeesPage({ isAdmin }) {
                     <td className="row-actions">
                       {editing?.id !== emp.id && (
                         <>
-                          <button className="link" onClick={() => setEditing({ id: emp.id, name: emp.name, email: emp.email || '', type: emp.type })}>Edit</button>
+                          <button className="link" onClick={() => setEditing({ id: emp.id, employee_code: emp.employee_code || '', name: emp.name, email: emp.email || '', type: emp.type })}>Edit</button>
                           <button className="link" onClick={() => toggleActive(emp)}>{emp.active ? 'Mark inactive' : 'Mark active'}</button>
                           {emp.split_count === 0 && <button className="link danger" onClick={() => remove(emp)}>Delete</button>}
                         </>

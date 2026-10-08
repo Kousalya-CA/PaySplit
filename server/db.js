@@ -277,6 +277,9 @@ addEmployeeColumn('type', "TEXT NOT NULL DEFAULT 'Product' CHECK (type IN ('Prod
 // before it existed; no two employees can share one.
 addEmployeeColumn('email', 'TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_email ON employees(email COLLATE NOCASE) WHERE email IS NOT NULL');
+// Company employee ID (for example CA1023). Empty for employees added before it existed; unique.
+addEmployeeColumn('employee_code', 'TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_code ON employees(employee_code COLLATE NOCASE) WHERE employee_code IS NOT NULL');
 
 // The owner is the permanent admin: OWNER_EMAIL if set, otherwise the first account created.
 if (!db.prepare('SELECT 1 FROM users WHERE is_owner = 1').get()) {

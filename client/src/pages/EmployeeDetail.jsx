@@ -57,7 +57,7 @@ export default function EmployeeDetail({ id }) {
       <div className="page-head">
         <div>
           <h1>{emp.name}</h1>
-          <p className="muted">{emp.email || 'No email yet'} · {emp.type}{emp.active ? '' : ' · Inactive'}</p>
+          <p className="muted">{emp.employee_code ? `${emp.employee_code} · ` : ''}{emp.email || 'No email yet'} · {emp.type}{emp.active ? '' : ' · Inactive'}</p>
         </div>
         {month && !loading && <button className="secondary" onClick={() => loadMonth(month)}>Reload</button>}
       </div>

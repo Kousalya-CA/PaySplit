@@ -32,13 +32,13 @@ function toNumber(value, label) {
 // ---------- queries ----------------------------------------------------------
 const q = {
   employees: db.prepare(`
-    SELECT e.id, e.name, e.email, e.active, e.type,
+    SELECT e.id, e.employee_code, e.name, e.email, e.active, e.type,
       (SELECT COUNT(*) FROM allocations a WHERE a.employee_id = e.id) AS split_count,
       (SELECT COALESCE(SUM(pay), 0) FROM payments p WHERE p.employee_id = e.id) AS total_pay
     FROM employees e ORDER BY e.active DESC, e.id`),
-  employee: db.prepare('SELECT id, name, email, active, type FROM employees WHERE id = ?'),
-  insertEmployee: db.prepare('INSERT INTO employees (name, type, email) VALUES (?, ?, ?)'),
-  updateEmployee: db.prepare('UPDATE employees SET name = ?, active = ?, type = ?, email = ? WHERE id = ?'),
+  employee: db.prepare('SELECT id, employee_code, name, email, active, type FROM employees WHERE id = ?'),
+  insertEmployee: db.prepare('INSERT INTO employees (name, type, email, employee_code) VALUES (?, ?, ?, ?)'),
+  updateEmployee: db.prepare('UPDATE employees SET name = ?, active = ?, type = ?, email = ?, employee_code = ? WHERE id = ?'),
   deleteEmployee: db.prepare('DELETE FROM employees WHERE id = ?'),
   employeeSplits: db.prepare('SELECT COUNT(*) AS n FROM allocations WHERE employee_id = ?'),
 
@@ -112,9 +112,20 @@ function parseEmployeeEmail(value) {
   return email;
 }
 
-function employeeUniqueError(err, name, email) {
+// The company employee ID: required, letters, digits, - _ / and . only, stored in upper case.
+function parseEmployeeCode(value) {
+  const code = String(value ?? '').trim().toUpperCase();
+  if (!code) throw new HttpError(400, 'Enter the employee ID.');
+  if (code.length > 30 || !/^[A-Z0-9][A-Z0-9._/-]*$/.test(code)) {
+    throw new HttpError(400, 'An employee ID can have letters, digits, - _ / and . only (up to 30 characters).');
+  }
+  return code;
+}
+
+function employeeUniqueError(err, name, email, code) {
   if (!isUniqueError(err)) return;
   if (/email/i.test(err.message)) throw new HttpError(409, `Another employee already uses ${email}.`);
+  if (/employee_code/i.test(err.message)) throw new HttpError(409, `Another employee already has the ID ${code}.`);
   throw new HttpError(409, `${name} is already in the employee list.`);
 }
 
@@ -297,16 +308,17 @@ export function registerDataRoutes(router) {
     const name = String(body.name ?? '').trim();
     if (!name) throw new HttpError(400, 'Enter the employee name.');
     const email = parseEmployeeEmail(body.email);
+    const code = parseEmployeeCode(body.employee_code);
     const type = body.type || 'Product';
     if (!['Product', 'Support', 'Admin'].includes(type)) {
       throw new HttpError(400, 'Type must be Product, Support, or Admin.');
     }
     try {
-      const { lastInsertRowid } = q.insertEmployee.run(name, type, email);
+      const { lastInsertRowid } = q.insertEmployee.run(name, type, email, code);
       setStatus(201);
-      return { id: Number(lastInsertRowid), name, email, active: true, type, split_count: 0, total_pay: 0 };
+      return { id: Number(lastInsertRowid), employee_code: code, name, email, active: true, type, split_count: 0, total_pay: 0 };
     } catch (err) {
-      employeeUniqueError(err, name, email);
+      employeeUniqueError(err, name, email, code);
       throw err;
     }
   }, admin);
@@ -323,13 +335,14 @@ export function registerDataRoutes(router) {
       throw new HttpError(400, 'Type must be Product, Support, or Admin.');
     }
     const email = body.email === undefined ? current.email : parseEmployeeEmail(body.email);
+    const code = body.employee_code === undefined ? current.employee_code : parseEmployeeCode(body.employee_code);
     try {
-      q.updateEmployee.run(name, active, type, email, params.id);
+      q.updateEmployee.run(name, active, type, email, code, params.id);
     } catch (err) {
-      employeeUniqueError(err, name, email);
+      employeeUniqueError(err, name, email, code);
       throw err;
     }
-    return { id: params.id, name, email, active: Boolean(active), type };
+    return { id: params.id, employee_code: code, name, email, active: Boolean(active), type };
   }, admin);
 
   router.delete('/api/employees/:id', ({ params }) => {

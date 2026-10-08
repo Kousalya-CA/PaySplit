@@ -25,7 +25,7 @@ const q = {
     INSERT INTO azdo_iterations (area_id, path, name, start_date, finish_date) VALUES (?, ?, ?, ?, ?)`),
   updateIteration: db.prepare('UPDATE azdo_iterations SET name = ?, start_date = ?, finish_date = ? WHERE id = ?'),
   deleteIteration: db.prepare('DELETE FROM azdo_iterations WHERE id = ?'),
-  employee: db.prepare('SELECT id, name, email, type, active FROM employees WHERE id = ?'),
+  employee: db.prepare('SELECT id, employee_code, name, email, type, active FROM employees WHERE id = ?'),
 };
 
 const settings = () => ({
