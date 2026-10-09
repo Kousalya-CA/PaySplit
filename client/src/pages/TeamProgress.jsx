@@ -25,9 +25,11 @@ const monthRange = (months) => {
 };
 
 // How each employee is doing on a customer's work in Azure DevOps (matched by the Client field),
-// for all months or one month's sprints.
+// for all months, one year, or a From–To range of months.
 export default function TeamProgress({ customer }) {
-  const [month, setMonth] = useState('');
+  const [year, setYear] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -43,13 +45,27 @@ export default function TeamProgress({ customer }) {
   const load = (refresh = false) => {
     setLoading(true);
     setError('');
-    api.customers.work(customer.id, month, refresh)
+    api.customers.work(customer.id, { from, to }, refresh)
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
   // Reload when the month changes or the customer's Azure DevOps client name is edited.
-  useEffect(() => { load(); }, [customer.id, customer.azdo_client, customer.name, month]);
+  useEffect(() => { load(); }, [customer.id, customer.azdo_client, customer.name, from, to]);
+
+  // Months with sprints, oldest first; the year limits the From and To lists to that year.
+  const allMonths = (data?.months || []).map((m) => m.month).sort();
+  const years = [...new Set(allMonths.map((m) => m.slice(0, 4)))].reverse();
+  const choices = allMonths.filter((m) => !year || m.startsWith(year));
+  const chooseYear = (y) => {
+    setYear(y);
+    const inYear = allMonths.filter((m) => m.startsWith(y));
+    setFrom(y ? inYear[0] || '' : '');
+    setTo(y ? inYear[inYear.length - 1] || '' : '');
+  };
+  const range = from || to
+    ? from === to ? monthLabel(from) : `${from ? monthLabel(from) : 'the start'} to ${to ? monthLabel(to) : 'now'}`
+    : 'all months';
 
   const people = data?.people ? [...data.people].sort((a, b) => {
     const by = SORTS[sort][1];
@@ -71,12 +87,27 @@ export default function TeamProgress({ customer }) {
         {data?.months?.length > 0 && (
           <div className="row tp-tools">
             <label className="wi-filter">
-              <span>Month</span>
-              <select value={month} onChange={(e) => setMonth(e.target.value)}>
-                <option value="">All months</option>
-                {data.months.map((m) => <option key={m.month} value={m.month}>{monthLabel(m.month)}</option>)}
+              <span>Year</span>
+              <select value={year} onChange={(e) => chooseYear(e.target.value)}>
+                <option value="">All years</option>
+                {years.map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
             </label>
+            <label className="wi-filter">
+              <span>From</span>
+              <select value={from} onChange={(e) => { setFrom(e.target.value); if (to && e.target.value > to) setTo(e.target.value); }}>
+                <option value="">First month</option>
+                {choices.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+              </select>
+            </label>
+            <label className="wi-filter">
+              <span>To</span>
+              <select value={to} onChange={(e) => { setTo(e.target.value); if (from && e.target.value && e.target.value < from) setFrom(e.target.value); }}>
+                <option value="">Last month</option>
+                {choices.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+              </select>
+            </label>
+            {(year || from || to) && <button className="link" onClick={() => chooseYear('')}>Clear</button>}
             <button className="secondary" disabled={loading} onClick={() => load(true)}>{loading ? 'Loading…' : 'Reload'}</button>
           </div>
         )}
@@ -89,7 +120,7 @@ export default function TeamProgress({ customer }) {
         <>
           <Summary summary={data.summary} />
           {people.length === 0 && !data.others ? (
-            <div className="empty"><p>No Tasks or Bugs for this customer {month ? `in ${monthLabel(month)}` : 'in the configured sprints'}.</p></div>
+            <div className="empty"><p>No Tasks or Bugs for this customer in {range}.</p></div>
           ) : (
             <div className="table-wrap">
               <table className="grid list tp-table">
@@ -124,7 +155,7 @@ export default function TeamProgress({ customer }) {
             </div>
           )}
           <p className="muted small">
-            Click ▸ next to a name to see the work items behind the numbers and each one's Client.
+            Showing {range}. Click ▸ next to a name to see the work items behind the numbers and each one's Client.
             Counts and hours are each person's own Tasks and Bugs. Tasks and Bugs with no Client of their own count for
             the customer when their User Story or Issue does. Removed items aren't counted.
             {data.fetchedAt && ` Read from Azure DevOps at ${new Date(data.fetchedAt).toLocaleTimeString()}.`}

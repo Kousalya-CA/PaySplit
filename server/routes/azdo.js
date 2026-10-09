@@ -488,8 +488,8 @@ export function registerAzdoRoutes(router) {
 
   // A customer's progress on the sprint board: every User Story, Issue, Task and Bug whose Client
   // field matches the customer (Tasks and Bugs with no client count through their parent), in the
-  // configured area paths and sprints, totalled per employee. ?month=2026-10 limits it to that
-  // month's sprints; ?refresh=1 skips the 5-minute cache.
+  // configured area paths and sprints, totalled per employee. ?from=2026-04&to=2026-10 limits it to
+  // the sprints in those months (either can be left out); ?refresh=1 skips the 5-minute cache.
   router.get('/api/customers/:id/work', async ({ params, req }) => {
     const customer = q.customer.get(params.id);
     if (!customer) throw new HttpError(404, 'Customer not found.');
@@ -504,8 +504,10 @@ export function registerAzdoRoutes(router) {
     }
     result.months = sprintMonths(areas).filter((m) => m.month !== 'undated');
     const search = new URL(req.url, 'http://x').searchParams;
-    const month = search.get('month') || '';
-    if (month && !result.months.some((m) => m.month === month)) throw new HttpError(404, 'There are no sprints for that month.');
+    const from = search.get('from') || '';
+    const to = search.get('to') || '';
+    for (const m of [from, to]) if (m && !/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) throw new HttpError(400, 'Months must look like 2026-10.');
+    if (from && to && from > to) throw new HttpError(400, 'The From month has to be on or before the To month.');
     requireSettings();
 
     const key = `${s.org}/${s.project}/${customer.id}/${clientNames.join('|')}`;
@@ -518,7 +520,7 @@ export function registerAzdoRoutes(router) {
     }
 
     // Totals per employee (matched by email); anyone else goes into one "Not in PaySplit" row.
-    const items = cached.items.filter((w) => !month || w.month === month);
+    const items = cached.items.filter((w) => (!from || w.month >= from) && (!to || w.month <= to));
     const byEmail = new Map(q.employeesWithEmail.all().map((e) => [e.email.toLowerCase(), e]));
     const inSplit = new Set(q.splitEmployees.all(customer.id).map((r) => r.employee_id));
     const blank = () => ({ tasks: { total: 0, closed: 0 }, bugs: { total: 0, closed: 0 }, original: 0, completed: 0, remaining: 0, months: new Set() });
@@ -549,7 +551,8 @@ export function registerAzdoRoutes(router) {
     const parents = items.filter((x) => PARENT_TYPES.includes(x.type));
     return {
       ...result,
-      month,
+      from,
+      to,
       fetchedAt: new Date(cached.at).toISOString(),
       people: rows.map(finish),
       others: others.tasks.total + others.bugs.total ? finish(others) : null,

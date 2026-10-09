@@ -66,7 +66,7 @@ Click an employee's name to see their Azure DevOps tasks in each configured area
 grouped under the parent User Story (matched by the employee's email).
 Each customer's page ends with **Team progress**: the customer's Azure DevOps Tasks and Bugs (matched
 by the Client field, or the "Client name in Azure DevOps" set under Edit customer), totalled per
-employee for all months or one month, ranked by most closed.
+employee for all months, a year, or a From–To range of months, ranked by most closed.
 
 ## Azure DevOps
 

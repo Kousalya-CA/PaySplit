@@ -60,8 +60,8 @@ export const api = {
     create: (body) => request('/customers', { method: 'POST', body }),
     update: (id, body) => request(`/customers/${id}`, { method: 'PATCH', body }),
     remove: (id) => request(`/customers/${id}`, { method: 'DELETE' }),
-    work: (id, month, refresh) => {
-      const query = new URLSearchParams({ ...(month ? { month } : {}), ...(refresh ? { refresh: '1' } : {}) }).toString();
+    work: (id, { from, to } = {}, refresh) => {
+      const query = new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}), ...(refresh ? { refresh: '1' } : {}) }).toString();
       return request(`/customers/${id}/work${query ? `?${query}` : ''}`);
     },
   },
