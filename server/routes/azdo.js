@@ -64,8 +64,12 @@ async function azFetch(s, path, { method = 'GET', body } = {}) {
   if ([203, 302, 401].includes(res.status)) {
     throw new HttpError(502, 'Azure DevOps didn\'t accept the PAT. Check AZ_PAT is valid and has Work Items (Read) access.');
   }
-  if (res.status === 403) throw new HttpError(502, 'The PAT doesn\'t have access to this project. It needs Work Items (Read).');
   const data = await res.json().catch(() => null);
+  // Pass on Azure DevOps' own reason so it's clear which permission or policy is missing.
+  if (res.status === 403) {
+    const reason = data?.message ? ` Azure DevOps said: ${data.message}` : '';
+    throw new HttpError(502, `Azure DevOps refused access to ${s.org}/${s.project}. The PAT must be made in the ${s.org} organisation, with Work Items (Read), by someone who can open this project.${reason}`);
+  }
   if (res.status === 404) return null;
   if (!res.ok) throw new HttpError(502, `Azure DevOps said: ${data?.message || `error ${res.status}`}`);
   return data;
