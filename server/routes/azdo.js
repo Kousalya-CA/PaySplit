@@ -280,9 +280,17 @@ async function customerItems(s, client, clientNames, months) {
     .flatMap(childIdsOf)
     .filter((id) => !items.has(id)))];
   const wanted = new Set(clientNames.map((n) => n.toLowerCase()));
-  for (const w of await workItemsWithLinks(s, childIds)) {
+  const clientOf = (w) => {
     const value = w.fields[client];
-    const name = String(value == null ? '' : typeof value === 'object' ? value.displayName ?? '' : value).trim().toLowerCase();
+    return String(value == null ? '' : typeof value === 'object' ? value.displayName ?? '' : value).trim();
+  };
+  // Which matched parent each child was found under (to show why a Task with no Client counts).
+  const parentOf = new Map();
+  for (const p of items.values()) {
+    if (PARENT_TYPES.includes(p.fields[F.type])) for (const id of childIdsOf(p)) parentOf.set(id, p);
+  }
+  for (const w of await workItemsWithLinks(s, childIds)) {
+    const name = clientOf(w).toLowerCase();
     if (CHILD_TYPES.includes(w.fields[F.type]) && (!name || wanted.has(name))) items.set(w.id, w);
   }
 
@@ -296,6 +304,14 @@ async function customerItems(s, client, clientNames, months) {
     records.push({
       id: w.id,
       type: f[F.type],
+      title: f[F.title],
+      state: f[F.state],
+      client: clientOf(w),
+      // The User Story / Issue it counts through when it has no Client of its own.
+      via: !clientOf(w) && parentOf.has(w.id)
+        ? { id: parentOf.get(w.id).id, title: parentOf.get(w.id).fields[F.title], client: clientOf(parentOf.get(w.id)) }
+        : null,
+      url: `https://dev.azure.com/${encodeURIComponent(s.org)}/${encodeURIComponent(s.project)}/_workitems/edit/${w.id}`,
       month,
       closed: category === 'Completed' || category === 'Resolved',
       email: String(f[F.assignedTo]?.uniqueName || '').toLowerCase(),
@@ -508,8 +524,10 @@ export function registerAzdoRoutes(router) {
     const blank = () => ({ tasks: { total: 0, closed: 0 }, bugs: { total: 0, closed: 0 }, original: 0, completed: 0, remaining: 0, months: new Set() });
     const people = new Map();
     const others = { ...blank(), names: new Set() };
+    const work = [];
     for (const w of items.filter((x) => CHILD_TYPES.includes(x.type))) {
       const emp = byEmail.get(w.email);
+      work.push({ ...w, email: undefined, employeeId: emp?.id ?? null });
       let row = others;
       if (emp) {
         if (!people.has(emp.id)) people.set(emp.id, { id: emp.id, name: emp.name, active: Boolean(emp.active), inSplit: inSplit.has(emp.id), ...blank() });
@@ -535,6 +553,7 @@ export function registerAzdoRoutes(router) {
       fetchedAt: new Date(cached.at).toISOString(),
       people: rows.map(finish),
       others: others.tasks.total + others.bugs.total ? finish(others) : null,
+      items: work.sort((a, b) => a.month.localeCompare(b.month) || a.id - b.id),
       summary: {
         parents: { total: parents.length, closed: parents.filter((x) => x.closed).length },
         tasks: { total: total((r) => r.tasks.total), closed: total((r) => r.tasks.closed) },

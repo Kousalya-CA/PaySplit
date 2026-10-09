@@ -32,6 +32,13 @@ export default function TeamProgress({ customer }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [sort, setSort] = useState('closed');
+  const [open, setOpen] = useState(() => new Set()); // employee ids (or 'others') whose items are shown
+  const toggle = (key) => setOpen((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const itemsFor = (key) => (data?.items || []).filter((w) => (key === 'others' ? w.employeeId === null : w.employeeId === key));
 
   const load = (refresh = false) => {
     setLoading(true);
@@ -103,12 +110,12 @@ export default function TeamProgress({ customer }) {
                 </thead>
                 <tbody>
                   {people.map((r, i) => (
-                    <Row key={r.id} rank={i + 1} row={r}
+                    <Row key={r.id} rank={i + 1} row={r} open={open.has(r.id)} onToggle={() => toggle(r.id)} items={itemsFor(r.id)}
                       name={<a href={`#/employees/${r.id}`}>{r.name}</a>}
                       split={r.inSplit ? 'Yes' : <span className="warn-text" title="Works on this customer but isn't in any of its splits">No ⚠</span>} />
                   ))}
                   {data.others && (
-                    <Row row={data.others} className="wi-other"
+                    <Row row={data.others} className="wi-other" open={open.has('others')} onToggle={() => toggle('others')} items={itemsFor('others')}
                       name={<span title={data.others.names.join(', ')}>Not in PaySplit <small className="muted">({data.others.names.join(', ')})</small></span>}
                       split="–" />
                   )}
@@ -117,6 +124,7 @@ export default function TeamProgress({ customer }) {
             </div>
           )}
           <p className="muted small">
+            Click ▸ next to a name to see the work items behind the numbers and each one's Client.
             Counts and hours are each person's own Tasks and Bugs. Tasks and Bugs with no Client of their own count for
             the customer when their User Story or Issue does. Removed items aren't counted.
             {data.fetchedAt && ` Read from Azure DevOps at ${new Date(data.fetchedAt).toLocaleTimeString()}.`}
@@ -127,12 +135,18 @@ export default function TeamProgress({ customer }) {
   );
 }
 
-function Row({ rank, row, name, split, className = '' }) {
+function Row({ rank, row, name, split, className = '', open, onToggle, items }) {
   const done = percent(row.completed, row.completed + row.remaining);
   return (
+    <>
     <tr className={className}>
       <td className="num">{rank ?? ''}</td>
-      <th scope="row">{name}</th>
+      <th scope="row">
+        <button className="link tp-toggle" aria-expanded={open} onClick={onToggle} title={open ? 'Hide work items' : 'Show work items'}>
+          {open ? '▾' : '▸'}<span className="sr-only">{open ? 'Hide' : 'Show'} work items</span>
+        </button>{' '}
+        {name}
+      </th>
       <td className="num"><strong>{closedOf(row)}</strong></td>
       <td className="num">{row.tasks.closed} / {row.tasks.total}</td>
       <td className="num">{row.bugs.closed} / {row.bugs.total}</td>
@@ -143,6 +157,50 @@ function Row({ rank, row, name, split, className = '' }) {
       <td className="small">{monthRange(row.months)}</td>
       <td>{split}</td>
     </tr>
+    {open && (
+      <tr className="tp-items">
+        <td />
+        <td colSpan={10}>
+          <table className="grid list wi-table">
+            <thead>
+              <tr>
+                <th scope="col">Month</th>
+                <th scope="col">Type</th>
+                <th scope="col" className="wi-title">Title</th>
+                <th scope="col">Client</th>
+                <th scope="col">Status</th>
+                <th scope="col">Assigned to</th>
+                <th scope="col" className="num">Estimated</th>
+                <th scope="col" className="num">Completed</th>
+                <th scope="col" className="num">Remaining</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((w) => (
+                <tr key={w.id}>
+                  <td className="small">{monthLabel(w.month)}</td>
+                  <td>{w.type}</td>
+                  <th scope="row" className="wi-title" title={`${w.id} ${w.title}`}>
+                    <a href={w.url} target="_blank" rel="noreferrer">{w.id}</a> {w.title}
+                  </th>
+                  <td>
+                    {w.client || (w.via
+                      ? <span className="muted" title={`${w.via.id} ${w.via.title}`}>{w.via.client} <small>(from #{w.via.id})</small></span>
+                      : <span className="muted">–</span>)}
+                  </td>
+                  <td>{w.state}</td>
+                  <td>{w.assignedTo || <span className="muted">Unassigned</span>}</td>
+                  <td className="num">{hours(w.original)}</td>
+                  <td className="num">{hours(w.completed)}</td>
+                  <td className="num">{hours(w.remaining)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
 
