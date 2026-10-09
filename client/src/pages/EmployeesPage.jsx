@@ -11,6 +11,15 @@ export default function EmployeesPage({ isAdmin }) {
   const [type, setType] = useState('Product');
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(null); // { id, employee_code, name, email, type }
+  const [search, setSearch] = useState('');
+
+  // Every word typed must appear in the name, employee ID, email or type. The row being edited stays.
+  const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = (employees || []).filter((emp) => {
+    if (!words.length || editing?.id === emp.id) return true;
+    const text = [emp.name, emp.employee_code, emp.email, emp.type, emp.active ? 'active' : 'inactive'].join(' ').toLowerCase();
+    return words.every((w) => text.includes(w));
+  });
 
   const load = () => api.employees.list().then(setEmployees).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
@@ -80,6 +89,19 @@ export default function EmployeesPage({ isAdmin }) {
       </form>}
       <ErrorNote>{error}</ErrorNote>
 
+      {isAdmin && employees?.length > 0 && (
+        <div className="search-bar">
+          <label className="grow">
+            <span className="sr-only">Search employees</span>
+            <input type="search" value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, employee ID, email or type" />
+          </label>
+          <span className="muted small" role="status">
+            {search.trim() ? `${shown.length} of ${employees.length} employees` : `${employees.length} employees`}
+          </span>
+        </div>
+      )}
+
       {!employees ? <Loading /> : employees.length === 0 ? (
         <div className="empty">
           <p>
@@ -88,6 +110,8 @@ export default function EmployeesPage({ isAdmin }) {
               : 'Your login isn\'t linked to an employee yet. Ask an admin to add your email to your entry on the Employees page.'}
           </p>
         </div>
+      ) : shown.length === 0 ? (
+        <div className="empty"><p>No employees match "{search.trim()}".</p></div>
       ) : (
         <div className="table-wrap">
           <table className="grid list">
@@ -104,7 +128,7 @@ export default function EmployeesPage({ isAdmin }) {
               </tr>
             </thead>
             <tbody>
-              {employees.map((emp) => (
+              {shown.map((emp) => (
                 <tr key={emp.id} className={emp.active ? '' : 'inactive'}>
                   <td>
                     {editing?.id === emp.id ? (

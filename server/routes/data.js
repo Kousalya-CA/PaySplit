@@ -77,12 +77,32 @@ const q = {
     FROM periods p WHERE p.id = ?`),
 
   allocationsForCustomer: db.prepare(`
-    SELECT a.id, a.period_id, a.category, a.employee_id, e.name AS employee, e.active, a.weightage
+    SELECT a.id, a.period_id, a.category, a.employee_id, e.name AS employee, e.active, a.weightage,
+      a.paid_on, a.paid_amount, a.paid_by
     FROM allocations a
     JOIN periods p ON p.id = a.period_id
     JOIN employees e ON e.id = a.employee_id
     WHERE p.customer_id = ? ORDER BY a.id`),
-  clearAllocations: db.prepare('DELETE FROM allocations WHERE period_id = ?'),
+  // Paid rows are never replaced when a period is saved.
+  clearAllocations: db.prepare('DELETE FROM allocations WHERE period_id = ? AND paid_on IS NULL'),
+  allocationsForPeriod: db.prepare('SELECT a.*, e.name AS employee FROM allocations a JOIN employees e ON e.id = a.employee_id WHERE a.period_id = ?'),
+  allocation: db.prepare(`
+    SELECT a.*, e.name AS employee, p.customer_id, p.start_month, x.pay
+    FROM allocations a
+    JOIN periods p ON p.id = a.period_id
+    JOIN employees e ON e.id = a.employee_id
+    LEFT JOIN payments x ON x.id = a.id
+    WHERE a.id = ?`),
+  markPaid: db.prepare('UPDATE allocations SET paid_on = ?, paid_amount = ?, paid_by = ? WHERE id = ? AND paid_on IS NULL'),
+  unmarkPaid: db.prepare('UPDATE allocations SET paid_on = NULL, paid_amount = NULL, paid_by = NULL WHERE id = ?'),
+  // Paid rows of a customer with the pay as it works out now (NULL if no share covers them any more).
+  paidForCustomer: db.prepare(`
+    SELECT a.id, a.paid_amount, e.name AS employee, p.start_month, x.pay
+    FROM allocations a
+    JOIN periods p ON p.id = a.period_id
+    JOIN employees e ON e.id = a.employee_id
+    LEFT JOIN payments x ON x.id = a.id
+    WHERE p.customer_id = ? AND a.paid_on IS NOT NULL`),
   insertAllocation: db.prepare(`
     INSERT INTO allocations (period_id, category, employee_id, weightage) VALUES (?, ?, ?, ?)`),
 
@@ -92,13 +112,14 @@ const q = {
       CASE category WHEN 'Direct' THEN 1 WHEN 'Support' THEN 2 ELSE 3 END, id`),
   months: db.prepare('SELECT DISTINCT start_month FROM periods ORDER BY start_month'),
   payByEmployeeMonth: db.prepare(`
-    SELECT employee_id, start_month, SUM(pay) AS pay FROM payments GROUP BY employee_id, start_month`),
+    SELECT employee_id, start_month, SUM(pay) AS pay, SUM(paid) AS paid FROM payments GROUP BY employee_id, start_month`),
   payByEmployeeCustomerMonth: db.prepare(`
-    SELECT employee_id, customer_id, customer, start_month, SUM(pay) AS pay
+    SELECT employee_id, customer_id, customer, start_month, SUM(pay) AS pay, SUM(paid) AS paid
     FROM payments GROUP BY employee_id, customer_id, start_month ORDER BY customer`),
   totals: db.prepare(`
     SELECT (SELECT COALESCE(SUM(revenue), 0) FROM periods) AS revenue,
-           (SELECT COALESCE(SUM(pay), 0) FROM payments) AS paid`),
+           (SELECT COALESCE(SUM(pay), 0) FROM payments) AS allocated,
+           (SELECT COALESCE(SUM(paid), 0) FROM payments) AS paid`),
 };
 
 // ---------- validation -------------------------------------------------------
@@ -284,6 +305,33 @@ function customerDetail(id) {
   return { ...customer, shares, periods };
 }
 
+// ---------- paid ----------------------------------------------------------------
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const round2 = (n) => Math.round(n * 100) / 100;
+
+function parsePaidOn(value) {
+  const day = String(value ?? '').trim();
+  const date = new Date(`${day}T00:00:00Z`);
+  if (!DATE_RE.test(day) || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== day) {
+    throw new HttpError(400, 'Choose the date it was paid.');
+  }
+  return day;
+}
+
+// Paid amounts never change: after changing a customer's shares or months, every paid row must
+// still work out to the amount paid, in the same month. Otherwise the change is refused (rolled back).
+function paidSnapshot(customerId) {
+  return new Map(q.paidForCustomer.all(customerId).map((r) => [r.id, r.start_month]));
+}
+function assertPaidUnchanged(customerId, before) {
+  for (const r of q.paidForCustomer.all(customerId)) {
+    const moved = before.has(r.id) && before.get(r.id) !== r.start_month;
+    if (moved || r.pay == null || Math.abs(round2(r.pay) - r.paid_amount) > 0.005) {
+      throw new HttpError(409, `${r.employee}'s pay for ${r.start_month} is marked as paid, so this change would alter a paid amount. Undo the paid mark on that payment first.`);
+    }
+  }
+}
+
 // ---------- who can see what -------------------------------------------------
 const employeeByEmail = db.prepare('SELECT id FROM employees WHERE email = ? COLLATE NOCASE');
 export const isAdmin = (user) => user?.role === 'admin';
@@ -410,6 +458,7 @@ export function registerDataRoutes(router) {
       throw new HttpError(409, `${current.name} already has revenue or splits entered, so it can't switch between ${current.frequency} and ${frequency}. Clear them first, or add a new customer.`);
     }
 
+    const paidBefore = paidSnapshot(params.id);
     transaction(() => {
       try {
         q.updateCustomer.run(name, onboard, frequency, azdoClient, params.id);
@@ -419,12 +468,16 @@ export function registerDataRoutes(router) {
       }
       if (frequencyChanged) q.deletePeriodsFor.run(params.id);
       if (shares) saveShares(params.id, shares, frequency);
+      assertPaidUnchanged(params.id, paidBefore);
     });
     return customerDetail(params.id);
   }, admin);
 
   router.delete('/api/customers/:id', ({ params }) => {
-    requireCustomer(params.id);
+    const customer = requireCustomer(params.id);
+    if (paidSnapshot(params.id).size) {
+      throw new HttpError(409, `${customer.name} has pay marked as paid, so it can't be deleted. Undo the paid marks first.`);
+    }
     q.deleteCustomer.run(params.id);
   }, admin);
 
@@ -469,6 +522,20 @@ export function registerDataRoutes(router) {
       if (revenue < 0) throw new HttpError(400, 'Revenue cannot be negative.');
     }
     const list = Array.isArray(body.allocations) ? body.allocations : [];
+    // Once anyone in this payment is marked paid, its revenue is locked and paid rows can't change.
+    const paidRows = q.allocationsForPeriod.all(params.id).filter((a) => a.paid_on);
+    if (paidRows.length) {
+      const same = (x, y) => (x == null && y == null) || (x != null && y != null && Math.abs(x - y) < 1e-6);
+      if (!same(revenue, period.revenue) || !same(usd.total, period.total_usd) || !same(usd.pct, period.usd_pct) || !same(usd.rate, period.usd_inr_rate)) {
+        throw new HttpError(409, 'Someone in this payment is marked as paid, so its revenue is locked. Undo every paid mark to change it.');
+      }
+      for (const p of paidRows) {
+        const sent = list.find((a) => a.category === p.category && Number(a.employee_id) === p.employee_id);
+        if (!sent || !same(Number(sent.weightage), p.weightage)) {
+          throw new HttpError(409, `${p.employee}'s ${p.category} pay is marked as paid, so it can't be changed or removed. Undo the paid mark first.`);
+        }
+      }
+    }
 
     const seen = new Set();
     const sums = { Direct: 0, Support: 0, Others: 0 };
@@ -494,8 +561,45 @@ export function registerDataRoutes(router) {
     transaction(() => {
       q.updatePeriod.run(revenue, usd.total, usd.pct, usd.rate, params.id);
       q.clearAllocations.run(params.id);
-      for (const r of rows) q.insertAllocation.run(params.id, r.category, r.employee_id, r.weightage);
+      for (const r of rows) {
+        if (paidRows.some((p) => p.category === r.category && p.employee_id === r.employee_id)) continue;
+        q.insertAllocation.run(params.id, r.category, r.employee_id, r.weightage);
+      }
     });
+    return customerDetail(period.customer_id);
+  }, admin);
+
+  // Mark one contributor's pay as paid on a date. The amount paid is the pay as it works out now.
+  const markOne = (a, paidOn, user) => {
+    if (a.paid_on) return false;
+    if (a.pay == null) throw new HttpError(400, `No revenue share covers ${a.start_month}, so ${a.employee}'s pay can't be marked as paid.`);
+    q.markPaid.run(paidOn, round2(a.pay), user?.email || null, a.id);
+    return true;
+  };
+
+  router.post('/api/allocations/:id/paid', ({ params, body, user }) => {
+    const a = q.allocation.get(params.id);
+    if (!a) throw new HttpError(404, 'That contributor wasn\'t found. Reload the page.');
+    if (a.paid_on) throw new HttpError(409, `${a.employee}'s pay is already marked as paid.`);
+    markOne(a, parsePaidOn(body.paid_on), user);
+    return customerDetail(a.customer_id);
+  }, admin);
+
+  router.delete('/api/allocations/:id/paid', ({ params }) => {
+    const a = q.allocation.get(params.id);
+    if (!a) throw new HttpError(404, 'That contributor wasn\'t found. Reload the page.');
+    q.unmarkPaid.run(a.id);
+    return customerDetail(a.customer_id);
+  }, admin);
+
+  // Mark everyone in a payment who isn't paid yet as paid on a date.
+  router.post('/api/periods/:id/paid', ({ params, body, user }) => {
+    const period = q.period.get(params.id);
+    if (!period) throw new HttpError(404, 'Period not found.');
+    const paidOn = parsePaidOn(body.paid_on);
+    const unpaid = q.allocationsForPeriod.all(params.id).filter((a) => !a.paid_on);
+    if (!unpaid.length) throw new HttpError(400, 'Everyone in this payment is already marked as paid.');
+    transaction(() => { for (const a of unpaid) markOne(q.allocation.get(a.id), paidOn, user); });
     return customerDetail(period.customer_id);
   }, admin);
 
@@ -522,40 +626,54 @@ export function registerDataRoutes(router) {
     const employees = q.employees.all()
       .filter((e) => !self || e.id === mine)
       .map((e) => {
+        // Allocated (pay worked out) and paid (marked as paid), by the month the pay is for.
         const byMonth = {};
         const byYear = {};
+        const paidByMonth = {};
+        const paidByYear = {};
+        let paidTotal = 0;
         for (const r of pay.filter((p) => p.employee_id === e.id)) {
-          byMonth[r.start_month] = (byMonth[r.start_month] || 0) + r.pay;
           const y = r.start_month.slice(0, 4);
+          byMonth[r.start_month] = (byMonth[r.start_month] || 0) + r.pay;
           byYear[y] = (byYear[y] || 0) + r.pay;
+          paidByMonth[r.start_month] = (paidByMonth[r.start_month] || 0) + r.paid;
+          paidByYear[y] = (paidByYear[y] || 0) + r.paid;
+          paidTotal += r.paid;
         }
         // Drill-down: the same pay split up by customer.
         const customers = new Map();
         for (const r of customerPay.filter((p) => p.employee_id === e.id)) {
           if (!customers.has(r.customer_id)) {
-            customers.set(r.customer_id, { id: r.customer_id, name: r.customer, byMonth: {}, byYear: {}, total: 0 });
+            customers.set(r.customer_id, { id: r.customer_id, name: r.customer, byMonth: {}, byYear: {}, total: 0, paidByMonth: {}, paidByYear: {}, paidTotal: 0 });
           }
           const c = customers.get(r.customer_id);
           const y = r.start_month.slice(0, 4);
           c.byMonth[r.start_month] = (c.byMonth[r.start_month] || 0) + r.pay;
           c.byYear[y] = (c.byYear[y] || 0) + r.pay;
           c.total += r.pay;
+          c.paidByMonth[r.start_month] = (c.paidByMonth[r.start_month] || 0) + r.paid;
+          c.paidByYear[y] = (c.paidByYear[y] || 0) + r.paid;
+          c.paidTotal += r.paid;
         }
         return {
-          id: e.id, name: e.name, active: Boolean(e.active), byMonth, byYear, total: e.total_pay,
+          id: e.id, name: e.name, active: Boolean(e.active), byMonth, byYear, total: e.total_pay, paidByMonth, paidByYear, paidTotal,
           customers: [...customers.values()],
         };
       })
       .filter((e) => self || e.active || e.total !== 0);
-    const monthTotals = Object.fromEntries(months.map((m) => [m, employees.reduce((s, e) => s + (e.byMonth[m] || 0), 0)]));
-    const yearTotals = Object.fromEntries(years.map((y) => [y, employees.reduce((s, e) => s + (e.byYear[y] || 0), 0)]));
+    const sumBy = (key, cols) => Object.fromEntries(cols.map((c) => [c, employees.reduce((s, e) => s + (e[key][c] || 0), 0)]));
+    const monthTotals = sumBy('byMonth', months);
+    const yearTotals = sumBy('byYear', years);
+    const paidMonthTotals = sumBy('paidByMonth', months);
+    const paidYearTotals = sumBy('paidByYear', years);
     if (self) {
       const message = mine ? null
         : 'Your login isn\'t linked to an employee yet. Ask an admin to add your email to your entry on the Employees page.';
-      const paid = employees.reduce((s, e) => s + e.total, 0);
-      return { self: true, message, months, years, employees, monthTotals, yearTotals, totals: { revenue: null, paid } };
+      const allocated = employees.reduce((s, e) => s + e.total, 0);
+      const paid = employees.reduce((s, e) => s + e.paidTotal, 0);
+      return { self: true, message, months, years, employees, monthTotals, yearTotals, paidMonthTotals, paidYearTotals, totals: { revenue: null, allocated, paid } };
     }
     const totals = q.totals.get();
-    return { self: false, months, years, employees, monthTotals, yearTotals, totals };
+    return { self: false, months, years, employees, monthTotals, yearTotals, paidMonthTotals, paidYearTotals, totals };
   });
 }

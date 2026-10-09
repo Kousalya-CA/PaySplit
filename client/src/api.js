@@ -67,6 +67,11 @@ export const api = {
   },
   periods: {
     save: (id, body) => request(`/periods/${id}`, { method: 'PUT', body }),
+    markAllPaid: (id, paidOn) => request(`/periods/${id}/paid`, { method: 'POST', body: { paid_on: paidOn } }),
+  },
+  allocations: {
+    markPaid: (id, paidOn) => request(`/allocations/${id}/paid`, { method: 'POST', body: { paid_on: paidOn } }),
+    undoPaid: (id) => request(`/allocations/${id}/paid`, { method: 'DELETE' }),
   },
   exchangeRate: () => request('/exchange-rate'),
   payments: () => request('/payments'),

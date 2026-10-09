@@ -36,7 +36,7 @@ export default function CustomersPage() {
                 <th scope="col">Payment</th>
                 <th scope="col">Onboarding share (Direct / Support / Others)</th>
                 <th scope="col" className="num">Revenue</th>
-                <th scope="col" className="num">Paid out</th>
+                <th scope="col" className="num">Allocated</th>
               </tr>
             </thead>
             <tbody>

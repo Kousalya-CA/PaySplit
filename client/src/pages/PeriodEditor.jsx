@@ -9,8 +9,14 @@ let nextKey = 1;
 const rowsFrom = (allocations) => Object.fromEntries(CATEGORIES.map((cat) => [
   cat,
   allocations.filter((a) => a.category === cat)
-    .map((a) => ({ key: nextKey++, employee_id: String(a.employee_id), weightage: toPctInput(a.weightage), exact: a.weightage })),
+    .map((a) => ({
+      key: nextKey++, id: a.id, employee_id: String(a.employee_id), weightage: toPctInput(a.weightage), exact: a.weightage,
+      paid_on: a.paid_on, paid_amount: a.paid_amount,
+    })),
 ]));
+
+// Today as YYYY-MM-DD in local time, the default paid date.
+const todayIso = () => new Date().toLocaleDateString('en-CA');
 
 // Weightage as a fraction: the exact stored value if the row wasn't retyped, otherwise what was typed.
 const fractionOf = (row) => (row.exact != null ? row.exact : parseNum(row.weightage) / 100);
@@ -41,6 +47,44 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   const [notice, setNotice] = useState('');
 
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+
+  // A new copy of the period from the server (after saving or marking paid): show it unless
+  // there are unsaved changes.
+  useEffect(() => {
+    if (dirty) return;
+    setRevenue(String(period.revenue));
+    setRows(rowsFrom(period.allocations));
+  }, [period]);
+
+  // Once anyone in this payment is paid, the revenue is locked (until every paid mark is undone).
+  const anyPaid = period.allocations.some((a) => a.paid_on);
+  const [busyPaid, setBusyPaid] = useState('');
+  const [allDate, setAllDate] = useState(null); // paid date while "Mark all as paid" is open
+  const paidAction = async (key, fn, message) => {
+    setBusyPaid(key);
+    setError('');
+    setNotice('');
+    try {
+      const updated = await fn();
+      onSaved(updated);
+      setNotice(message);
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    } finally {
+      setBusyPaid('');
+    }
+  };
+  const markPaid = (row, paidOn) => paidAction(`row-${row.id}`, () => api.allocations.markPaid(row.id, paidOn), 'Marked as paid.');
+  const undoPaid = (row, name) => {
+    if (!window.confirm(`Undo the paid mark for ${name}? Their weightage can then be changed again.`)) return;
+    paidAction(`row-${row.id}`, () => api.allocations.undoPaid(row.id), 'Paid mark removed.');
+  };
+  const unpaidSaved = period.allocations.filter((a) => !a.paid_on);
+  const markAll = async () => {
+    if (await paidAction('all', () => api.periods.markAllPaid(period.id, allDate), `Marked ${unpaidSaved.length} as paid.`)) setAllDate(null);
+  };
 
   // Fill in today's rate unless this payment was already saved with one.
   useEffect(() => {
@@ -154,17 +198,22 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
           )}
         </div>
         <label className="revenue">
-          <span>{wording.revenue}</span>
+          <span>{wording.revenue}{anyPaid && ' 🔒'}</span>
           <span className="prefix-input">
             <span aria-hidden="true">₹</span>
-            <input inputMode="decimal" readOnly={usdOn}
+            <input inputMode="decimal" readOnly={usdOn || anyPaid}
               value={usdOn ? (Number.isFinite(usdRevenue) ? usdRevenue.toFixed(2) : '') : revenue}
               onChange={(e) => change(() => setRevenue(e.target.value))} />
           </span>
         </label>
       </div>
 
-      <fieldset className="usd-calc">
+      {anyPaid && (
+        <p className="muted small">
+          🔒 Revenue is locked because someone in this payment is marked as paid. Undo every paid mark to change it.
+        </p>
+      )}
+      <fieldset className="usd-calc" disabled={anyPaid}>
         <legend>Revenue from a total in US dollars</legend>
         <div className="row">
           <label>
@@ -219,29 +268,59 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
             onAdd={() => addRow(cat)}
             onRemove={(key) => removeRow(cat, key)}
             onEqual={() => splitEqually(cat)}
+            dirty={dirty}
+            busyPaid={busyPaid}
+            onMarkPaid={markPaid}
+            onUndoPaid={undoPaid}
           />
         ))}
       </div>
 
       <div className="period-foot">
         <p>
-          Paying out <strong>{money(totalPaid)}</strong> of {money(revValue)}
+          Allocating <strong>{money(totalPaid)}</strong> of {money(revValue)}
           {revValue - totalPaid > 0.005 && <span className="warn-text"> ({money(revValue - totalPaid)} not assigned)</span>}
+          {period.allocations.length > 0 && (
+            <> · Paid <strong>{money(paidSum(period))}</strong>, pending <strong>{money(Math.max(0, period.paid - paidSum(period)))}</strong></>
+          )}
         </p>
         <ErrorNote>{error}</ErrorNote>
         {notice && <p className="ok-text" role="status">{notice}</p>}
         <div className="actions">
           <button className="primary" onClick={save} disabled={saving || !dirty}>{saving ? 'Saving…' : 'Save period'}</button>
           {dirty && <button className="secondary" onClick={discard}>Discard changes</button>}
-          {prev && prev.allocations.length > 0 && (
+          {prev && prev.allocations.length > 0 && !anyPaid && (
             <button className="secondary" onClick={copyPrevious}>Copy contributors from {monthLabel(prev.start_month)}</button>
-          )}        </div>
+          )}
+          {unpaidSaved.length > 0 && allDate === null && (
+            <button className="secondary" disabled={dirty} title={dirty ? 'Save or discard your changes first' : undefined}
+              onClick={() => setAllDate(todayIso())}>
+              Mark all as paid
+            </button>
+          )}
+        </div>
+        {allDate !== null && (
+          <div className="paid-all">
+            <label>
+              <span>Paid on</span>
+              <input type="date" value={allDate} max={todayIso()} onChange={(e) => setAllDate(e.target.value)} />
+            </label>
+            <button className="primary" disabled={!allDate || busyPaid === 'all'} onClick={markAll}>
+              {busyPaid === 'all' ? 'Saving…' : `Mark ${unpaidSaved.length} as paid`}
+            </button>
+            <button className="secondary" onClick={() => setAllDate(null)}>Cancel</button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function CategoryTable({ category, share, stats, rows, employees, onChange, onAdd, onRemove, onEqual }) {
+const paidSum = (period) => period.allocations.reduce((s, a) => s + (a.paid_on ? a.paid_amount : 0), 0);
+
+function CategoryTable({ category, share, stats, rows, employees, onChange, onAdd, onRemove, onEqual, dirty, busyPaid, onMarkPaid, onUndoPaid }) {
+  const [dateFor, setDateFor] = useState({}); // row key -> paid date while "Mark paid" is open
+  const anyPaidHere = rows.some((r) => r.paid_on);
   const { pool, sum } = stats;
   const over = sum > 100.01;
   const full = Math.abs(sum - 100) < 0.01;
@@ -259,16 +338,19 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
       ) : (
         <table className="alloc">
           <thead>
-            <tr><th scope="col">Employee</th><th scope="col">Weightage</th><th scope="col" className="num">Pay</th><th><span className="sr-only">Remove</span></th></tr>
+            <tr><th scope="col">Employee</th><th scope="col">Weightage</th><th scope="col" className="num">Pay</th><th scope="col">Status</th><th><span className="sr-only">Remove</span></th></tr>
           </thead>
           <tbody>
             {rows.map((r) => {
               const f = fractionOf(r);
               const pay = pool * (Number.isFinite(f) ? f : 0);
+              const name = employees.find((e) => String(e.id) === r.employee_id)?.name || 'this contributor';
+              const paid = Boolean(r.paid_on);
+              const busy = busyPaid === `row-${r.id}`;
               return (
-                <tr key={r.key}>
+                <tr key={r.key} className={paid ? 'alloc-paid' : undefined}>
                   <td>
-                    <select aria-label={`${category} employee`} value={r.employee_id} onChange={(e) => onChange(r.key, 'employee_id', e.target.value)}>
+                    <select aria-label={`${category} employee`} value={r.employee_id} disabled={paid} onChange={(e) => onChange(r.key, 'employee_id', e.target.value)}>
                       <option value="">Choose…</option>
                       {employees
                         .filter((e) => (e.active || String(e.id) === r.employee_id))
@@ -278,13 +360,42 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
                   </td>
                   <td>
                     <span className="suffix-input small-input">
-                      <input inputMode="decimal" aria-label={`${category} weightage`} value={r.weightage}
+                      <input inputMode="decimal" aria-label={`${category} weightage`} value={r.weightage} readOnly={paid}
+                        title={paid ? 'Paid: undo the paid mark to change it' : undefined}
                         onChange={(e) => onChange(r.key, 'weightage', e.target.value)} />
                       <span aria-hidden="true">%</span>
                     </span>
                   </td>
-                  <td className="num">{money(pay)}</td>
-                  <td><button className="remove" onClick={() => onRemove(r.key)} aria-label="Remove contributor">×</button></td>
+                  <td className="num">{money(paid ? r.paid_amount : pay)}</td>
+                  <td className="paid-cell">
+                    {paid ? (
+                      <>
+                        <span className="paid-tag">✓ Paid {dayLabel(r.paid_on)}</span>{' '}
+                        <button className="link" disabled={busy} onClick={() => onUndoPaid(r, name)}>{busy ? '…' : 'Undo'}</button>
+                      </>
+                    ) : !r.id ? (
+                      <span className="muted small">Save first</span>
+                    ) : dateFor[r.key] !== undefined ? (
+                      <span className="paid-pick">
+                        <input type="date" aria-label={`Date ${name} was paid`} value={dateFor[r.key]} max={new Date().toLocaleDateString('en-CA')}
+                          onChange={(e) => setDateFor({ ...dateFor, [r.key]: e.target.value })} />
+                        <button className="link" disabled={!dateFor[r.key] || busy}
+                          onClick={async () => { if (await onMarkPaid(r, dateFor[r.key])) setDateFor({ ...dateFor, [r.key]: undefined }); }}>
+                          {busy ? 'Saving…' : 'Save'}
+                        </button>
+                        <button className="link" onClick={() => setDateFor({ ...dateFor, [r.key]: undefined })}>Cancel</button>
+                      </span>
+                    ) : (
+                      <>
+                        <span className="muted small">Unpaid</span>{' '}
+                        <button className="link" disabled={dirty} title={dirty ? 'Save or discard your changes first' : undefined}
+                          onClick={() => setDateFor({ ...dateFor, [r.key]: new Date().toLocaleDateString('en-CA') })}>
+                          Mark paid
+                        </button>
+                      </>
+                    )}
+                  </td>
+                  <td>{!paid && <button className="remove" onClick={() => onRemove(r.key)} aria-label="Remove contributor">×</button>}</td>
                 </tr>
               );
             })}
@@ -294,7 +405,7 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
 
       <div className="category-tools">
         <button className="link" onClick={onAdd}>Add contributor</button>
-        {rows.length > 1 && <button className="link" onClick={onEqual}>Split equally</button>}
+        {rows.length > 1 && !anyPaidHere && <button className="link" onClick={onEqual}>Split equally</button>}
       </div>
 
       <div className={`meter ${over ? 'over' : full ? 'full' : ''}`} aria-hidden="true">

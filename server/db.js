@@ -228,11 +228,20 @@ db.exec(`
     AND (SELECT frequency FROM customers c WHERE c.id = shares.customer_id) <> 'Monthly';
 `);
 
+// Marking a contributor's pay as paid: the date it was paid, the amount paid (the pay at that
+// moment, kept as it was) and who marked it. All NULL while unpaid.
+const allocationColumns = new Set(db.prepare('PRAGMA table_info(allocations)').all().map((c) => c.name));
+for (const [col, type] of [['paid_on', 'TEXT'], ['paid_amount', 'REAL'], ['paid_by', 'TEXT']]) {
+  if (!allocationColumns.has(col)) db.exec(`ALTER TABLE allocations ADD COLUMN ${col} ${type}`);
+}
+
 db.exec(`
   -- Pay is never stored: it is always Revenue x Category % x Weightage %
   -- (the same formula as the Excel workbook), using the share that covers the period.
   -- Allocations in a period with no share are left out (pay 0).
-  CREATE VIEW IF NOT EXISTS payments AS
+  -- paid is the amount marked as paid (0 while unpaid). Rebuilt on every start so new columns appear.
+  DROP VIEW IF EXISTS payments;
+  CREATE VIEW payments AS
   SELECT
     a.id           AS id,
     c.id           AS customer_id,
@@ -252,7 +261,9 @@ db.exec(`
     p.revenue * a.weightage *
       CASE a.category WHEN 'Direct' THEN s.direct_pct
                       WHEN 'Support' THEN s.support_pct
-                      ELSE s.others_pct END AS pay
+                      ELSE s.others_pct END AS pay,
+    a.paid_on      AS paid_on,
+    CASE WHEN a.paid_on IS NULL THEN 0 ELSE a.paid_amount END AS paid
   FROM allocations a
   JOIN periods   p ON p.id = a.period_id
   JOIN customers c ON c.id = p.customer_id

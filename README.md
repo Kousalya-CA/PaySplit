@@ -97,6 +97,8 @@ If the database has no users at all, the login page shows a one-time form to cre
 Helpful tools on the customer page:
 - **Split equally** gives every contributor in a category the same weightage.
 - **Copy contributors from last month** reuses the previous month's split.
+- **Mark paid** (with the date paid) on each contributor, or **Mark all as paid**. A paid row keeps the amount paid and
+  its weightage can't change; while anyone in a payment is paid, its revenue is locked. **Undo** removes the mark.
 - A bar under each category shows how much of its pool is assigned. Totals over 100% can't be saved.
 
 ## Project structure
@@ -128,8 +130,8 @@ employees                id, employee_code, name, email, active, type
 customers                id, name, onboard_month, frequency, azdo_client
 shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct
 periods                  id, customer_id, start_month, revenue, total_usd, usd_pct, usd_inr_rate
-allocations              id, period_id, category, employee_id, weightage
-payments (view)          every allocation with pay = revenue × category % × weightage
+allocations              id, period_id, category, employee_id, weightage, paid_on, paid_amount, paid_by
+payments (view)          every allocation with pay = revenue × category % × weightage, and the amount paid
 azdo_settings            key, value (Azure DevOps organisation and project)
 azdo_areas               id, path, name, display_name
 azdo_iterations          id, area_id, path, name, start_date, finish_date
@@ -152,6 +154,9 @@ Percentages are stored as fractions (0.7 = 70%).
 | DELETE | /api/customers/:id            | Delete a customer and its periods               |
 | POST   | /api/customers/:id/periods    | Add the next month or year                      |
 | PUT    | /api/periods/:id              | Save revenue and contributors for a period      |
+| POST   | /api/allocations/:id/paid     | Mark one contributor paid `{ paid_on }`          |
+| DELETE | /api/allocations/:id/paid     | Undo a paid mark                                |
+| POST   | /api/periods/:id/paid         | Mark everyone unpaid in a period paid           |
 | DELETE | /api/periods/:id              | Delete a period                                 |
 | GET    | /api/payments                 | All payment rows                                |
 | GET    | /api/summary                  | Pay by month and by year                        |

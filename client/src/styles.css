@@ -341,3 +341,20 @@ tr.inactive th, tr.inactive td { color: var(--muted); }
   .period, .panel { padding: 1rem; }
 }
 @media (prefers-reduced-motion: reduce) { .meter span { transition: none; } }
+
+/* ---------- search ---------- */
+.search-bar { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: .75rem; max-width: 36rem; }
+.search-bar input { width: 100%; }
+
+/* ---------- paid ---------- */
+.paid-tag { color: var(--green); font-weight: 700; white-space: nowrap; }
+.paid-cell { white-space: nowrap; }
+.paid-pick { display: inline-flex; align-items: center; gap: .4rem; }
+.paid-pick input { width: auto; }
+.alloc-paid td { background: var(--green-soft); }
+.alloc-paid input[readonly], .alloc-paid select:disabled { opacity: .8; cursor: not-allowed; }
+.paid-all { display: flex; align-items: flex-end; gap: .75rem; flex-wrap: wrap; margin-top: .75rem; }
+.seg { display: inline-flex; border: 2px solid var(--line); border-radius: .6rem; overflow: hidden; margin-top: 1rem; }
+.seg button { border: 0; background: var(--surface); color: var(--ink); padding: .4rem .9rem; font: inherit; font-weight: 600; cursor: pointer; }
+.seg button + button { border-left: 2px solid var(--line); }
+.seg button.on { background: var(--ink); color: var(--surface); }
