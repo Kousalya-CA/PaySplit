@@ -294,6 +294,12 @@ tr.inactive th, tr.inactive td { color: var(--muted); }
 .wi-bar span { display: block; height: 100%; background: var(--green); }
 .wi-hours { display: grid; grid-template-columns: auto auto; justify-content: space-between; gap: .15rem 1rem; margin: 0; }
 .wi-hours dt { color: var(--muted); }
+.page label > small { display: block; margin-top: .25rem; }
+.team-progress { margin-top: 2.5rem; display: grid; gap: .75rem; }
+.team-progress .page-head { margin-bottom: 0; }
+.tp-tools { align-items: center; gap: .75rem; }
+.tp-table .sort { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: inherit; cursor: pointer; white-space: nowrap; }
+.tp-table .sort.on { color: var(--green); }
 .wi-hours dd { margin: 0; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
 
 .categories { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1.5rem; }

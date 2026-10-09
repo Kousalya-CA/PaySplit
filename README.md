@@ -64,6 +64,9 @@ Open http://localhost:5173.
 
 Click an employee's name to see their Azure DevOps tasks in each configured area path and sprint,
 grouped under the parent User Story (matched by the employee's email).
+Each customer's page ends with **Team progress**: the customer's Azure DevOps Tasks and Bugs (matched
+by the Client field, or the "Client name in Azure DevOps" set under Edit customer), totalled per
+employee for all months or one month, ranked by most closed.
 
 ## Azure DevOps
 
@@ -122,7 +125,7 @@ client/src/
 users                    id, name, email, role (admin/employee), is_owner, last_login_at, setup link
 sessions                 login sessions
 employees                id, employee_code, name, email, active, type
-customers                id, name, onboard_month, frequency
+customers                id, name, onboard_month, frequency, azdo_client
 shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct
 periods                  id, customer_id, start_month, revenue, total_usd, usd_pct, usd_inr_rate
 allocations              id, period_id, category, employee_id, weightage

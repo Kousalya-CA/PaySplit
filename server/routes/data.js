@@ -50,7 +50,7 @@ const q = {
     FROM customers c ORDER BY c.name`),
   customer: db.prepare('SELECT * FROM customers WHERE id = ?'),
   insertCustomer: db.prepare('INSERT INTO customers (name, onboard_month, frequency) VALUES (?, ?, ?)'),
-  updateCustomer: db.prepare('UPDATE customers SET name = ?, onboard_month = ?, frequency = ? WHERE id = ?'),
+  updateCustomer: db.prepare('UPDATE customers SET name = ?, onboard_month = ?, frequency = ?, azdo_client = ? WHERE id = ?'),
 
   allShares: db.prepare('SELECT * FROM shares ORDER BY customer_id, from_month'),
   sharesFor: db.prepare('SELECT * FROM shares WHERE customer_id = ? ORDER BY from_month'),
@@ -398,6 +398,10 @@ export function registerDataRoutes(router) {
       throw new HttpError(400, 'Send the revenue shares when changing the onboard month or payment frequency.');
     }
     const shares = body.shares === undefined ? null : parseShares(body.shares, onboard, frequency);
+    // The customer's name(s) in the Azure DevOps "Client" field; empty means the customer name.
+    const azdoClient = body.azdo_client === undefined ? current.azdo_client
+      : String(body.azdo_client ?? '').split(',').map((n) => n.trim()).filter(Boolean).join(', ') || null;
+    if (azdoClient && azdoClient.length > 200) throw new HttpError(400, 'Keep the Azure DevOps client name to 200 characters or fewer.');
 
     // Each frequency has a different period length (1, 12 or 36 months), so switching replaces the
     // periods. That's only allowed before any revenue or split is entered.
@@ -408,7 +412,7 @@ export function registerDataRoutes(router) {
 
     transaction(() => {
       try {
-        q.updateCustomer.run(name, onboard, frequency, params.id);
+        q.updateCustomer.run(name, onboard, frequency, azdoClient, params.id);
       } catch (err) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;

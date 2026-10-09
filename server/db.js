@@ -188,6 +188,12 @@ if (!shareColumns.has('payment_month')) db.exec('ALTER TABLE shares ADD COLUMN p
 const areaColumns = new Set(db.prepare('PRAGMA table_info(azdo_areas)').all().map((c) => c.name));
 if (!areaColumns.has('display_name')) db.exec('ALTER TABLE azdo_areas ADD COLUMN display_name TEXT');
 
+// How a customer is written in the Azure DevOps "Client" field (comma-separated if more than one).
+// NULL means the customer's name.
+if (!new Set(db.prepare('PRAGMA table_info(customers)').all().map((c) => c.name)).has('azdo_client')) {
+  db.exec('ALTER TABLE customers ADD COLUMN azdo_client TEXT');
+}
+
 // A period's revenue can be worked out from a total in US dollars:
 // revenue (₹) = total_usd x usd_pct x usd_inr_rate. NULL when the ₹ revenue was typed in directly.
 const periodColumns = new Set(db.prepare('PRAGMA table_info(periods)').all().map((c) => c.name));

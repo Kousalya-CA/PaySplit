@@ -26,6 +26,10 @@ const q = {
   updateIteration: db.prepare('UPDATE azdo_iterations SET name = ?, start_date = ?, finish_date = ? WHERE id = ?'),
   deleteIteration: db.prepare('DELETE FROM azdo_iterations WHERE id = ?'),
   employee: db.prepare('SELECT id, employee_code, name, email, type, active FROM employees WHERE id = ?'),
+  customer: db.prepare('SELECT id, name, azdo_client FROM customers WHERE id = ?'),
+  employeesWithEmail: db.prepare('SELECT id, name, email, active FROM employees WHERE email IS NOT NULL'),
+  splitEmployees: db.prepare(`
+    SELECT DISTINCT a.employee_id FROM allocations a JOIN periods p ON p.id = a.period_id WHERE p.customer_id = ?`),
 };
 
 const settings = () => ({
@@ -240,6 +244,69 @@ function sprintMonths(areas) {
   return [...months.values()].sort((x, y) => (x.month === 'undated' ? 1 : y.month === 'undated' ? -1 : y.month.localeCompare(x.month)));
 }
 
+// ---------- a customer's work -------------------------------------------------
+const CUSTOMER_WORK_TTL = 5 * 60 * 1000;
+const customerWorkCache = new Map();
+
+const isUnder = (path, parent) => {
+  const p = String(path || '').toLowerCase();
+  const top = String(parent).toLowerCase();
+  return p === top || p.startsWith(`${top}\\`);
+};
+
+// The month of the configured sprint a work item is in (by area path and iteration path), or null.
+function monthOf(fields, months) {
+  const m = months.find((x) => x.sprints.some((sp) => isUnder(fields[F.area], sp.areaPath) && isUnder(fields[F.iteration], sp.path)));
+  return m ? m.month : null;
+}
+
+// Every work item for a customer in the configured sprints, as small records with the month,
+// closed flag and hours. Removed items are left out. A Task or Bug whose Client is empty counts
+// when its parent matches; one with another client never does.
+async function customerItems(s, client, clientNames, months) {
+  const pairs = months.flatMap((m) => m.sprints).map((sp) =>
+    `([System.AreaPath] UNDER '${esc(sp.areaPath)}' AND [System.IterationPath] UNDER '${esc(sp.path)}')`);
+  const types = [...PARENT_TYPES, ...CHILD_TYPES].map((t) => `'${t}'`).join(', ');
+  const query = `SELECT [System.Id] FROM WorkItems
+    WHERE [System.TeamProject] = @project AND [System.WorkItemType] IN (${types})
+      AND [${client}] IN (${clientNames.map((n) => `'${esc(n)}'`).join(', ')}) AND (${pairs.join(' OR ')})
+    ORDER BY [System.Id]`;
+  const found = await azFetch(s, 'wit/wiql', { method: 'POST', body: { query } });
+  const items = new Map((await workItemsWithLinks(s, (found?.workItems || []).map((w) => w.id))).map((w) => [w.id, w]));
+
+  // Tasks and Bugs under the matched User Stories and Issues.
+  const childIds = [...new Set([...items.values()]
+    .filter((w) => PARENT_TYPES.includes(w.fields[F.type]))
+    .flatMap(childIdsOf)
+    .filter((id) => !items.has(id)))];
+  const wanted = new Set(clientNames.map((n) => n.toLowerCase()));
+  for (const w of await workItemsWithLinks(s, childIds)) {
+    const value = w.fields[client];
+    const name = String(value == null ? '' : typeof value === 'object' ? value.displayName ?? '' : value).trim().toLowerCase();
+    if (CHILD_TYPES.includes(w.fields[F.type]) && (!name || wanted.has(name))) items.set(w.id, w);
+  }
+
+  const states = await stateCategories(s);
+  const records = [];
+  for (const w of items.values()) {
+    const f = w.fields || {};
+    const month = monthOf(f, months);
+    const category = stateCategory(states, f[F.type], f[F.state]);
+    if (!month || category === 'Removed') continue;
+    records.push({
+      id: w.id,
+      type: f[F.type],
+      month,
+      closed: category === 'Completed' || category === 'Resolved',
+      email: String(f[F.assignedTo]?.uniqueName || '').toLowerCase(),
+      assignedTo: f[F.assignedTo]?.displayName || '',
+      original: f[F.original] || 0,
+      completed: f[F.completed] || 0,
+      remaining: f[F.remaining] || 0,
+    });
+  }
+  return records;
+}
 export function registerAzdoRoutes(router) {
   const admin = { admin: true };
 
@@ -402,4 +469,78 @@ export function registerAzdoRoutes(router) {
       counts: { parents: parents.length, mine: theirs.length },
     };
   });
+
+  // A customer's progress on the sprint board: every User Story, Issue, Task and Bug whose Client
+  // field matches the customer (Tasks and Bugs with no client count through their parent), in the
+  // configured area paths and sprints, totalled per employee. ?month=2026-10 limits it to that
+  // month's sprints; ?refresh=1 skips the 5-minute cache.
+  router.get('/api/customers/:id/work', async ({ params, req }) => {
+    const customer = q.customer.get(params.id);
+    if (!customer) throw new HttpError(404, 'Customer not found.');
+    const clientNames = (customer.azdo_client || customer.name).split(',').map((n) => n.trim()).filter(Boolean);
+    const result = { clientNames, months: [] };
+
+    const s = settings();
+    const iterations = q.iterations.all();
+    const areas = q.areas.all().map((a) => ({ ...a, iterations: iterations.filter((i) => i.area_id === a.id) }));
+    if (!s.org || !s.project || !areas.some((a) => a.iterations.length)) {
+      return { ...result, message: 'Azure DevOps isn\'t set up yet. Add area paths and sprints on the Azure DevOps page.' };
+    }
+    result.months = sprintMonths(areas).filter((m) => m.month !== 'undated');
+    const search = new URL(req.url, 'http://x').searchParams;
+    const month = search.get('month') || '';
+    if (month && !result.months.some((m) => m.month === month)) throw new HttpError(404, 'There are no sprints for that month.');
+    requireSettings();
+
+    const key = `${s.org}/${s.project}/${customer.id}/${clientNames.join('|')}`;
+    let cached = customerWorkCache.get(key);
+    if (!cached || search.get('refresh') || Date.now() - cached.at > CUSTOMER_WORK_TTL) {
+      const client = await clientField(s);
+      if (!client) return { ...result, message: 'No field called "Client" was found in Azure DevOps, so work can\'t be matched to customers.' };
+      cached = { at: Date.now(), items: await customerItems(s, client, clientNames, result.months) };
+      customerWorkCache.set(key, cached);
+    }
+
+    // Totals per employee (matched by email); anyone else goes into one "Not in PaySplit" row.
+    const items = cached.items.filter((w) => !month || w.month === month);
+    const byEmail = new Map(q.employeesWithEmail.all().map((e) => [e.email.toLowerCase(), e]));
+    const inSplit = new Set(q.splitEmployees.all(customer.id).map((r) => r.employee_id));
+    const blank = () => ({ tasks: { total: 0, closed: 0 }, bugs: { total: 0, closed: 0 }, original: 0, completed: 0, remaining: 0, months: new Set() });
+    const people = new Map();
+    const others = { ...blank(), names: new Set() };
+    for (const w of items.filter((x) => CHILD_TYPES.includes(x.type))) {
+      const emp = byEmail.get(w.email);
+      let row = others;
+      if (emp) {
+        if (!people.has(emp.id)) people.set(emp.id, { id: emp.id, name: emp.name, active: Boolean(emp.active), inSplit: inSplit.has(emp.id), ...blank() });
+        row = people.get(emp.id);
+      } else others.names.add(w.assignedTo || 'Unassigned');
+      const bucket = w.type === 'Bug' ? row.bugs : row.tasks;
+      bucket.total += 1;
+      if (w.closed) bucket.closed += 1;
+      row.original += w.original;
+      row.completed += w.completed;
+      row.remaining += w.remaining;
+      row.months.add(w.month);
+    }
+    const finish = (r) => ({ ...r, months: [...r.months].sort(), names: r.names ? [...r.names].sort() : undefined });
+    const closedCount = (r) => r.tasks.closed + r.bugs.closed;
+    const rows = [...people.values()].sort((a, b) => closedCount(b) - closedCount(a) || b.completed - a.completed || a.name.localeCompare(b.name));
+    const all = [...rows, others];
+    const total = (pick) => all.reduce((n, r) => n + pick(r), 0);
+    const parents = items.filter((x) => PARENT_TYPES.includes(x.type));
+    return {
+      ...result,
+      month,
+      fetchedAt: new Date(cached.at).toISOString(),
+      people: rows.map(finish),
+      others: others.tasks.total + others.bugs.total ? finish(others) : null,
+      summary: {
+        parents: { total: parents.length, closed: parents.filter((x) => x.closed).length },
+        tasks: { total: total((r) => r.tasks.total), closed: total((r) => r.tasks.closed) },
+        bugs: { total: total((r) => r.bugs.total), closed: total((r) => r.bugs.closed) },
+        original: total((r) => r.original), completed: total((r) => r.completed), remaining: total((r) => r.remaining),
+      },
+    };
+  }, admin);
 }

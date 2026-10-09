@@ -6,6 +6,7 @@ import { Loading, ErrorNote } from '../components/common.jsx';
 import { FrequencyChoice } from './CustomersPage.jsx';
 import RevenueShares, { sharesFromCustomer, relayoutShares, moveOnboarding, sharesForApi, shareMonths } from './RevenueShares.jsx';
 import PeriodEditor from './PeriodEditor.jsx';
+import TeamProgress from './TeamProgress.jsx';
 
 export default function CustomerDetail({ id }) {
   const [customer, setCustomer] = useState(null);
@@ -146,6 +147,8 @@ export default function CustomerDetail({ id }) {
       ) : (
         <div className="empty"><p>This customer has no periods. Add a revenue share in Edit customer to create them.</p></div>
       )}
+
+      <TeamProgress customer={customer} />
     </section>
   );
 }
@@ -154,6 +157,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
   const [name, setName] = useState(customer.name);
   const [onboard, setOnboard] = useState(customer.onboard_month);
   const [frequency, setFrequency] = useState(customer.frequency);
+  const [azdoClient, setAzdoClient] = useState(customer.azdo_client || '');
   const [shares, setShares] = useState(() => sharesFromCustomer(customer));
   const changeFrequency = (f) => {
     setFrequency(f);
@@ -175,6 +179,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
         name,
         onboard_month: onboard,
         frequency,
+        azdo_client: azdoClient,
         shares: sharesForApi(shares),
       }));
     } catch (err) {
@@ -197,6 +202,11 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
           <input type="month" value={onboard} onChange={(e) => changeOnboard(e.target.value)} required />
         </label>
       </div>
+      <label>
+        <span>Client name in Azure DevOps</span>
+        <input value={azdoClient} onChange={(e) => setAzdoClient(e.target.value)} placeholder={name || 'Same as the customer name'} maxLength={200} />
+        <small className="muted">How the Client field spells this customer on the sprint board. Leave empty to use the customer name; separate several spellings with commas.</small>
+      </label>
       <FrequencyChoice value={frequency} onChange={changeFrequency} />
       {onboard && <RevenueShares shares={shares} onChange={setShares} onboard={onboard} frequency={frequency} />}
       <p className="muted small">
