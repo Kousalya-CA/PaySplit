@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { money, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel, dayLabel } from '../format.js';
 import { ErrorNote } from '../components/common.jsx';
@@ -338,7 +338,7 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
       ) : (
         <table className="alloc">
           <thead>
-            <tr><th scope="col">Employee</th><th scope="col">Weightage</th><th scope="col" className="num">Pay</th><th scope="col">Status</th><th><span className="sr-only">Remove</span></th></tr>
+            <tr><th scope="col">Employee</th><th scope="col">Weightage</th><th scope="col" className="num">Pay</th><th><span className="sr-only">Remove</span></th></tr>
           </thead>
           <tbody>
             {rows.map((r) => {
@@ -348,7 +348,8 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
               const paid = Boolean(r.paid_on);
               const busy = busyPaid === `row-${r.id}`;
               return (
-                <tr key={r.key} className={paid ? 'alloc-paid' : undefined}>
+                <Fragment key={r.key}>
+                <tr className={paid ? 'alloc-paid' : undefined}>
                   <td>
                     <select aria-label={`${category} employee`} value={r.employee_id} disabled={paid} onChange={(e) => onChange(r.key, 'employee_id', e.target.value)}>
                       <option value="">Choose…</option>
@@ -367,7 +368,11 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
                     </span>
                   </td>
                   <td className="num">{money(paid ? r.paid_amount : pay)}</td>
-                  <td className="paid-cell">
+                  <td>{!paid && <button className="remove" onClick={() => onRemove(r.key)} aria-label="Remove contributor">×</button>}</td>
+                </tr>
+                {/* Paid status sits on its own line under the contributor so the three category columns keep their width. */}
+                <tr className={`alloc-status${paid ? ' alloc-paid' : ''}`}>
+                  <td colSpan={4} className="paid-cell">
                     {paid ? (
                       <>
                         <span className="paid-tag">✓ Paid {dayLabel(r.paid_on)}</span>{' '}
@@ -395,8 +400,8 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
                       </>
                     )}
                   </td>
-                  <td>{!paid && <button className="remove" onClick={() => onRemove(r.key)} aria-label="Remove contributor">×</button>}</td>
                 </tr>
+                </Fragment>
               );
             })}
           </tbody>
