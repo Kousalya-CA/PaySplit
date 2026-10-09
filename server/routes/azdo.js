@@ -159,6 +159,34 @@ async function clientField(s) {
   return clientFieldCache.get(key);
 }
 
+// Each work item type's states and their Azure DevOps category (Proposed, InProgress, Resolved,
+// Completed or Removed), looked up once per project, so custom state names are handled too.
+// Map of 'type' -> Map of 'state' (lower case) -> category.
+const statesCache = new Map();
+async function stateCategories(s) {
+  const key = `${s.org}/${s.project}`;
+  if (!statesCache.has(key)) {
+    const byType = new Map();
+    for (const type of [...PARENT_TYPES, ...CHILD_TYPES]) {
+      const data = await azFetch(s, `wit/workitemtypes/${encodeURIComponent(type)}/states`);
+      byType.set(type, new Map((data?.value || []).map((st) => [String(st.name).toLowerCase(), st.category])));
+    }
+    statesCache.set(key, byType);
+  }
+  return statesCache.get(key);
+}
+
+// A state's category, guessed from common names if the type's states couldn't be read.
+function stateCategory(states, type, state) {
+  const name = String(state || '').toLowerCase();
+  const known = states?.get(type)?.get(name);
+  if (known) return known;
+  if (['closed', 'done', 'completed'].includes(name)) return 'Completed';
+  if (name === 'resolved') return 'Resolved';
+  if (name === 'removed') return 'Removed';
+  return name === 'new' || name === 'proposed' || name === 'to do' ? 'Proposed' : 'InProgress';
+}
+
 // The label for a work item's area: the display name (or name) of the configured area path it's
 // under, picking the longest match; otherwise its path without the project name.
 function areaLabel(path, areas) {
@@ -170,7 +198,7 @@ function areaLabel(path, areas) {
 }
 
 // One table row from a work item.
-function toRow(s, w, client, mine, areas) {
+function toRow(s, w, client, mine, areas, states) {
   const f = w.fields || {};
   const assigned = f[F.assignedTo];
   const assignedEmail = String(assigned?.uniqueName || '').toLowerCase();
@@ -180,6 +208,7 @@ function toRow(s, w, client, mine, areas) {
     type: f[F.type],
     title: f[F.title],
     state: f[F.state],
+    stateCategory: stateCategory(states, f[F.type], f[F.state]),
     areaPath: f[F.area],
     area: areaLabel(f[F.area], areas),
     iterationPath: f[F.iteration],
@@ -328,6 +357,7 @@ export function registerAzdoRoutes(router) {
     const assignedIds = (found?.workItems || []).map((w) => w.id);
 
     const client = await clientField(s);
+    const states = await stateCategories(s);
     const mine = employee.email.toLowerCase();
     const items = new Map((await workItemsWithLinks(s, assignedIds)).map((w) => [w.id, w]));
 
@@ -351,16 +381,16 @@ export function registerAzdoRoutes(router) {
       const kids = childIdsOf(p).map((id) => items.get(id))
         .filter((w) => w && CHILD_TYPES.includes(w.fields[F.type]) && isMine(w))
         .sort((a, b) => a.id - b.id);
-      rows.push({ ...toRow(s, p, client, mine, areas), level: 0, childCount: kids.length });
+      rows.push({ ...toRow(s, p, client, mine, areas, states), level: 0, childCount: kids.length });
       shown.add(p.id);
       for (const k of kids) {
-        rows.push({ ...toRow(s, k, client, mine, areas), level: 1, parentId: p.id });
+        rows.push({ ...toRow(s, k, client, mine, areas, states), level: 1, parentId: p.id });
         shown.add(k.id);
       }
     }
     for (const id of assignedIds) {
       const w = items.get(id);
-      if (w && !shown.has(id)) rows.push({ ...toRow(s, w, client, mine, areas), level: 0, childCount: 0, noParent: true });
+      if (w && !shown.has(id)) rows.push({ ...toRow(s, w, client, mine, areas, states), level: 0, childCount: 0, noParent: true });
     }
 
     // The employee's own hours: their tasks and bugs (not parents, whose hours roll up from tasks).

@@ -287,6 +287,14 @@ tr.inactive th, tr.inactive td { color: var(--muted); }
 .wi-table .wi-title { width: clamp(12rem, 26vw, 24rem); max-width: clamp(12rem, 26vw, 24rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wi-filter { display: flex; align-items: center; gap: .5rem; }
 .wi-filter span { font-weight: 600; }
+.wi-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .75rem; }
+.wi-card { display: grid; gap: .3rem; align-content: start; padding: .9rem 1rem; background: var(--surface); border: 2px solid var(--line); border-radius: .8rem; }
+.wi-big { font-size: 1.6rem; line-height: 1.1; }
+.wi-bar { height: .45rem; background: var(--line); border-radius: 1rem; overflow: hidden; }
+.wi-bar span { display: block; height: 100%; background: var(--green); }
+.wi-hours { display: grid; grid-template-columns: auto auto; justify-content: space-between; gap: .15rem 1rem; margin: 0; }
+.wi-hours dt { color: var(--muted); }
+.wi-hours dd { margin: 0; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
 
 .categories { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1.5rem; }
 .category { border: 2px solid var(--line); border-top-width: 6px; border-radius: .8rem; padding: 1rem .8rem; display: flex; flex-direction: column; gap: .6rem; min-width: 0; }

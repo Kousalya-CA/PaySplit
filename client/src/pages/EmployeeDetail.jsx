@@ -106,6 +106,52 @@ function filterByClient(rows, client) {
   return rows.filter((r) => (r.level ? childOk(r) : matches(r.client) || keepParent.has(r.id)));
 }
 
+const isClosed = (r) => r.stateCategory === 'Completed' || r.stateCategory === 'Resolved';
+
+// Counts and hours for the rows shown (so the Client filter applies). Removed items aren't counted.
+// Parents include ones assigned to others; tasks, bugs and hours are the employee's own only.
+function MonthSummary({ rows }) {
+  const live = rows.filter((r) => r.stateCategory !== 'Removed');
+  const group = (list) => ({ total: list.length, closed: list.filter(isClosed).length });
+  const theirs = live.filter((r) => r.mine && CHILD_TYPES.includes(r.type));
+  const cards = [
+    ['User Stories / Issues', group(live.filter((r) => !CHILD_TYPES.includes(r.type)))],
+    ['Tasks', group(theirs.filter((r) => r.type === 'Task'))],
+    ['Bugs', group(theirs.filter((r) => r.type === 'Bug'))],
+  ];
+  const sum = (k) => theirs.reduce((n, r) => n + (r[k] || 0), 0);
+  const done = sum('completed');
+  const left = sum('remaining');
+  const pct = done + left ? Math.round((done / (done + left)) * 100) : null;
+
+  return (
+    <div className="wi-summary">
+      {cards.map(([label, g]) => {
+        const p = g.total ? Math.round((g.closed / g.total) * 100) : 0;
+        return (
+          <div key={label} className="wi-card">
+            <span className="muted small">{label}</span>
+            <strong className="wi-big">{g.total}</strong>
+            <span className="small">{g.closed} closed · {g.total - g.closed} open</span>
+            <div className="wi-bar" role="img" aria-label={`${p}% closed`}><span style={{ width: `${p}%` }} /></div>
+            <span className="muted small">{g.total ? `${p}% closed` : 'None'}</span>
+          </div>
+        );
+      })}
+      <div className="wi-card">
+        <span className="muted small">Effort (their tasks and bugs)</span>
+        <dl className="wi-hours">
+          <dt>Estimated</dt><dd>{hours(sum('original'))} h</dd>
+          <dt>Completed</dt><dd>{hours(done)} h</dd>
+          <dt>Remaining</dt><dd>{hours(left)} h</dd>
+        </dl>
+        <div className="wi-bar" role="img" aria-label={`${pct ?? 0}% complete`}><span style={{ width: `${pct ?? 0}%` }} /></div>
+        <span className="muted small">{pct === null ? 'No hours logged' : `${pct}% complete`}</span>
+      </div>
+    </div>
+  );
+}
+
 function MonthTable({ data }) {
   const { sprints, clientField } = data;
   const [client, setClient] = useState('');
@@ -131,6 +177,7 @@ function MonthTable({ data }) {
           </select>
         </label>
       )}
+      {rows.length > 0 && <MonthSummary rows={rows} />}
       {data.rows.length === 0 ? (
         <div className="empty"><p>No work items assigned in these sprints.</p></div>
       ) : rows.length === 0 ? (
