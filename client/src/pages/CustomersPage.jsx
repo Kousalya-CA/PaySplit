@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, pct, dayLabel } from '../format.js';
+import { monthLabel, pct, dayLabel, moneyList, CURRENCIES } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 import RevenueShares, { newShares, relayoutShares, sharesForApi } from './RevenueShares.jsx';
@@ -39,6 +39,7 @@ export default function CustomersPage() {
                 <th scope="col">Customer</th>
                 <th scope="col">Onboarded</th>
                 <th scope="col">Payment</th>
+                <th scope="col">Currency</th>
                 <th scope="col">Onboarding share (Direct / Support / Others)</th>
                 <th scope="col" className="num">Revenue</th>
                 <th scope="col" className="num">Allocated</th>
@@ -51,12 +52,13 @@ export default function CustomersPage() {
                   <th scope="row"><a href={`#/customers/${c.id}`}>{c.name}</a></th>
                   <td>{monthLabel(c.onboard_month)}</td>
                   <td>{c.frequency}</td>
+                  <td>{c.currency}</td>
                   <td>
                     {c.shares[0] && `${pct(c.shares[0].direct_pct)} / ${pct(c.shares[0].support_pct)} / ${pct(c.shares[0].others_pct)}`}
                     {c.shares.length > 1 && <span className="muted small"> +{c.shares.length - 1} more</span>}
                   </td>
-                  <td><Money value={c.total_revenue} /></td>
-                  <td><Money value={c.total_paid} /></td>
+                  <td><Money value={c.total_revenue} currency={c.currency} /></td>
+                  <td className="num">{moneyList(c.allocated) || <Money value={0} />}</td>
                   <td><DeployedCell customer={c} deployments={deployments} /></td>
                 </tr>
               ))}
@@ -90,6 +92,23 @@ const FREQUENCY_OPTIONS = [
   ['Three Years', 'Enter the revenue for the whole contract once. The split holds for 36 months from the onboard month.'],
 ];
 
+// The currency the customer is billed in. Revenue is entered in it, and pay is in it unless a
+// payment is converted to INR.
+export function CurrencyField({ value, onChange, disabled }) {
+  return (
+    <label className="currency-field">
+      <span>Currency</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
+        {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
+      </select>
+      <small className="muted">
+        {disabled ? 'Revenue is already entered in this currency, so it can\'t change.'
+          : 'Revenue is entered in this currency. Pay stays in it unless a payment is converted to INR.'}
+      </small>
+    </label>
+  );
+}
+
 export function FrequencyChoice({ value, onChange }) {
   return (
     <fieldset className="choice">
@@ -105,7 +124,7 @@ export function FrequencyChoice({ value, onChange }) {
 }
 
 function NewCustomerForm({ onCancel }) {
-  const [form, setForm] = useState({ name: '', onboard_month: thisMonth(), frequency: 'Monthly' });
+  const [form, setForm] = useState({ name: '', onboard_month: thisMonth(), frequency: 'Monthly', currency: 'INR' });
   const [shares, setShares] = useState(() => newShares(form.onboard_month, form.frequency));
   // Moving the onboard month or changing the frequency lays the shares out again from the onboard month.
   const changeForm = (patch) => {
@@ -146,6 +165,7 @@ function NewCustomerForm({ onCancel }) {
         </label>
       </div>
 
+      <CurrencyField value={form.currency} onChange={(currency) => changeForm({ currency })} />
       <FrequencyChoice value={form.frequency} onChange={(frequency) => changeForm({ frequency })} />
 
       {form.onboard_month && (

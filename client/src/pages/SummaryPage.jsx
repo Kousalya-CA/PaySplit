@@ -1,22 +1,27 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { money, monthLabel } from '../format.js';
-import { Loading, ErrorNote, Money } from '../components/common.jsx';
+import { moneyIn, currencySymbol, monthLabel } from '../format.js';
+import { Loading, ErrorNote, Money as MoneyIn } from '../components/common.jsx';
 
 // Same as the "Monthly Summary" sheet: pay per employee per month, then yearly totals.
 // Allocated is the pay worked out from the splits; Paid is what's been marked as paid; Pending is the rest.
 // An Employee login gets only their own row (the server filters it) and no company-wide figures.
+// Pay in different currencies is never added together: the page shows one currency at a time.
 export default function SummaryPage({ isAdmin }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [view, setView] = useState('allocated');
+  const [currency, setCurrency] = useState('');
 
-  useEffect(() => { api.summary().then(setData).catch((e) => setError(e.message)); }, []);
+  useEffect(() => { api.summary(currency).then(setData).catch((e) => setError(e.message)); }, [currency]);
 
   if (error) return <ErrorNote>{error}</ErrorNote>;
   if (!data) return <Loading />;
 
   const { months, years, employees, monthTotals, yearTotals, paidMonthTotals, paidYearTotals, totals } = data;
+  const cur = data.currency;
+  const Money = ({ value }) => <MoneyIn value={value} currency={cur} />;
+  const money = (n) => moneyIn(n, cur);
   const unallocated = data.self ? 0 : totals.revenue - totals.allocated;
   const pending = totals.allocated - totals.paid;
 
@@ -52,10 +57,22 @@ export default function SummaryPage({ isAdmin }) {
     <section>
       <div className="page-head">
         <h1>{data.self ? 'My pay' : 'Summary'}</h1>
+        {data.currencies.length > 1 && (
+          <div className="seg seg-top" role="radiogroup" aria-label="Currency">
+            {data.currencies.map((c) => (
+              <button key={c} role="radio" aria-checked={c === cur} className={c === cur ? 'on' : ''} onClick={() => setCurrency(c)}>
+                {currencySymbol(c) === c ? c : `${currencySymbol(c)} ${c}`}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+      {data.currencies.length > 1 && (
+        <p className="muted small">Showing pay in {cur}. Pay in other currencies isn't added in; switch currency above to see it.</p>
+      )}
 
       <dl className="figures">
-        {!data.self && <div><dt>Revenue entered</dt><dd>{money(totals.revenue)}</dd></div>}
+        {!data.self && <div><dt>Pool for employees</dt><dd>{money(totals.revenue)}</dd></div>}
         <div><dt>{data.self ? 'My allocated pay' : 'Allocated to employees'}</dt><dd>{money(totals.allocated)}</dd></div>
         <div><dt>Paid</dt><dd className="ok-text">{money(totals.paid)}</dd></div>
         <div><dt>Pending</dt><dd className={pending > 0.005 ? 'warn-text' : ''}>{money(pending)}</dd></div>
@@ -91,7 +108,7 @@ export default function SummaryPage({ isAdmin }) {
               <th scope="col" className="num">Total</th>
             </tr>
           </thead>
-          <EmployeeRows employees={employees} columns={months} by="byMonth" linkCustomers={isAdmin} cell={cell} rowTotal={rowTotal} />
+          <EmployeeRows currency={cur} employees={employees} columns={months} by="byMonth" linkCustomers={isAdmin} cell={cell} rowTotal={rowTotal} />
           <tfoot>
             <tr>
               <th scope="row">Total</th>
@@ -112,7 +129,7 @@ export default function SummaryPage({ isAdmin }) {
               <th scope="col" className="num">Total</th>
             </tr>
           </thead>
-          <EmployeeRows employees={employees} columns={years} by="byYear" linkCustomers={isAdmin} cell={cell} rowTotal={rowTotal} />
+          <EmployeeRows currency={cur} employees={employees} columns={years} by="byYear" linkCustomers={isAdmin} cell={cell} rowTotal={rowTotal} />
           <tfoot>
             <tr>
               <th scope="row">Total</th>
@@ -131,7 +148,8 @@ export default function SummaryPage({ isAdmin }) {
 }
 
 // One row per employee; clicking the name drills down into their pay by customer.
-function EmployeeRows({ employees, columns, by, linkCustomers, cell, rowTotal }) {
+function EmployeeRows({ employees, columns, by, linkCustomers, cell, rowTotal, currency }) {
+  const Money = ({ value }) => <MoneyIn value={value} currency={currency} />;
   const [open, setOpen] = useState(() => new Set());
   const toggle = (id) => setOpen((prev) => {
     const next = new Set(prev);

@@ -13,7 +13,12 @@ export const FREQUENCIES = {
   'Three Years': { step: 36 },
 };
 const MAX_PERIODS = 600;
-let rateCache = null; // { fetchedAt, value } for /api/exchange-rate
+const rateCache = new Map(); // currency -> { fetchedAt, value } for /api/exchange-rate
+
+// Currencies a customer can be billed in. Pay is in the customer's currency unless a payment is
+// converted to INR.
+export const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AUD', 'SGD', 'AED'];
+const PAY_CURRENCY_SQL = "CASE WHEN p.fx_rate IS NOT NULL AND c.currency <> 'INR' THEN 'INR' ELSE c.currency END";
 
 export function addMonths(ym, n) {
   const [y, m] = ym.split('-').map(Number);
@@ -33,9 +38,9 @@ function toNumber(value, label) {
 const q = {
   employees: db.prepare(`
     SELECT e.id, e.employee_code, e.name, e.email, e.active, e.type,
-      (SELECT COUNT(*) FROM allocations a WHERE a.employee_id = e.id) AS split_count,
-      (SELECT COALESCE(SUM(pay), 0) FROM payments p WHERE p.employee_id = e.id) AS total_pay
+      (SELECT COUNT(*) FROM allocations a WHERE a.employee_id = e.id) AS split_count
     FROM employees e ORDER BY e.active DESC, e.id`),
+  payByEmployeeCurrency: db.prepare('SELECT employee_id, currency, SUM(pay) AS amount FROM payments GROUP BY employee_id, currency ORDER BY currency'),
   employee: db.prepare('SELECT id, employee_code, name, email, active, type FROM employees WHERE id = ?'),
   insertEmployee: db.prepare('INSERT INTO employees (name, type, email, employee_code) VALUES (?, ?, ?, ?)'),
   updateEmployee: db.prepare('UPDATE employees SET name = ?, active = ?, type = ?, email = ?, employee_code = ? WHERE id = ?'),
@@ -45,12 +50,13 @@ const q = {
   customers: db.prepare(`
     SELECT c.*,
       (SELECT COUNT(*) FROM periods p WHERE p.customer_id = c.id) AS period_count,
-      (SELECT COALESCE(SUM(revenue), 0) FROM periods p WHERE p.customer_id = c.id) AS total_revenue,
-      (SELECT COALESCE(SUM(pay), 0) FROM payments x WHERE x.customer_id = c.id) AS total_paid
+      (SELECT COALESCE(SUM(amount), 0) FROM periods p WHERE p.customer_id = c.id) AS total_revenue
     FROM customers c ORDER BY c.name`),
+  payByCustomerCurrency: db.prepare('SELECT customer_id, currency, SUM(pay) AS amount FROM payments GROUP BY customer_id, currency ORDER BY currency'),
+  customerHasRevenue: db.prepare('SELECT EXISTS (SELECT 1 FROM periods WHERE customer_id = ? AND (revenue <> 0 OR COALESCE(amount, 0) <> 0)) AS has_revenue'),
   customer: db.prepare('SELECT * FROM customers WHERE id = ?'),
-  insertCustomer: db.prepare('INSERT INTO customers (name, onboard_month, frequency) VALUES (?, ?, ?)'),
-  updateCustomer: db.prepare('UPDATE customers SET name = ?, onboard_month = ?, frequency = ?, azdo_client = ? WHERE id = ?'),
+  insertCustomer: db.prepare('INSERT INTO customers (name, onboard_month, frequency, currency) VALUES (?, ?, ?, ?)'),
+  updateCustomer: db.prepare('UPDATE customers SET name = ?, onboard_month = ?, frequency = ?, azdo_client = ?, currency = ? WHERE id = ?'),
 
   allShares: db.prepare('SELECT * FROM shares ORDER BY customer_id, from_month'),
   sharesFor: db.prepare('SELECT * FROM shares WHERE customer_id = ? ORDER BY from_month'),
@@ -70,7 +76,7 @@ const q = {
   periodsFor: db.prepare('SELECT * FROM periods WHERE customer_id = ? ORDER BY start_month'),
   period: db.prepare('SELECT * FROM periods WHERE id = ?'),
   insertPeriod: db.prepare('INSERT INTO periods (customer_id, start_month, revenue) VALUES (?, ?, ?)'),
-  updatePeriod: db.prepare('UPDATE periods SET revenue = ?, total_usd = ?, usd_pct = ?, usd_inr_rate = ? WHERE id = ?'),
+  updatePeriod: db.prepare('UPDATE periods SET revenue = ?, amount = ?, share_pct = ?, fx_rate = ? WHERE id = ?'),
   deletePeriod: db.prepare('DELETE FROM periods WHERE id = ?'),
   periodHasData: db.prepare(`
     SELECT p.revenue <> 0 OR EXISTS (SELECT 1 FROM allocations a WHERE a.period_id = p.id) AS has_data
@@ -111,15 +117,21 @@ const q = {
     ORDER BY start_month, customer,
       CASE category WHEN 'Direct' THEN 1 WHEN 'Support' THEN 2 ELSE 3 END, id`),
   months: db.prepare('SELECT DISTINCT start_month FROM periods ORDER BY start_month'),
+  // Currencies pay is in: from contributors' pay, and from payments with revenue entered.
+  currenciesUsed: db.prepare(`
+    SELECT currency FROM payments
+    UNION SELECT ${PAY_CURRENCY_SQL} FROM periods p JOIN customers c ON c.id = p.customer_id WHERE p.revenue <> 0`),
   payByEmployeeMonth: db.prepare(`
-    SELECT employee_id, start_month, SUM(pay) AS pay, SUM(paid) AS paid FROM payments GROUP BY employee_id, start_month`),
+    SELECT employee_id, start_month, SUM(pay) AS pay, SUM(paid) AS paid FROM payments WHERE currency = ?
+    GROUP BY employee_id, start_month`),
   payByEmployeeCustomerMonth: db.prepare(`
     SELECT employee_id, customer_id, customer, start_month, SUM(pay) AS pay, SUM(paid) AS paid
-    FROM payments GROUP BY employee_id, customer_id, start_month ORDER BY customer`),
+    FROM payments WHERE currency = ? GROUP BY employee_id, customer_id, start_month ORDER BY customer`),
   totals: db.prepare(`
-    SELECT (SELECT COALESCE(SUM(revenue), 0) FROM periods) AS revenue,
-           (SELECT COALESCE(SUM(pay), 0) FROM payments) AS allocated,
-           (SELECT COALESCE(SUM(paid), 0) FROM payments) AS paid`),
+    SELECT (SELECT COALESCE(SUM(p.revenue), 0) FROM periods p JOIN customers c ON c.id = p.customer_id
+              WHERE ${PAY_CURRENCY_SQL} = ?1) AS revenue,
+           (SELECT COALESCE(SUM(pay), 0) FROM payments WHERE currency = ?1) AS allocated,
+           (SELECT COALESCE(SUM(paid), 0) FROM payments WHERE currency = ?1) AS paid`),
 };
 
 // ---------- validation -------------------------------------------------------
@@ -278,6 +290,22 @@ function requireCustomer(id) {
   return c;
 }
 
+function parseCurrency(value) {
+  const currency = String(value ?? 'INR').trim().toUpperCase();
+  if (!CURRENCIES.includes(currency)) throw new HttpError(400, `Choose the currency: ${CURRENCIES.join(', ')}.`);
+  return currency;
+}
+
+// [{ currency, amount }] per id, from a "GROUP BY id, currency" query.
+function byCurrency(rows, key) {
+  const out = new Map();
+  for (const r of rows) {
+    if (!out.has(r[key])) out.set(r[key], []);
+    out.get(r[key]).push({ currency: r.currency, amount: r.amount });
+  }
+  return out;
+}
+
 function parseFrequency(value) {
   if (!Object.hasOwn(FREQUENCIES, value)) throw new HttpError(400, 'Choose Monthly, Yearly or Three Years payment.');
   return value;
@@ -300,7 +328,8 @@ function customerDetail(id) {
     const cover_from = !monthly && share ? share.from_month : p.start_month;
     const end_month = monthly ? p.start_month
       : share ? share.to_month : addMonths(p.start_month, FREQUENCIES[customer.frequency].step - 1);
-    return { ...p, cover_from, end_month, share, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
+    const currency = p.fx_rate != null && customer.currency !== 'INR' ? 'INR' : customer.currency;
+    return { ...p, currency, cover_from, end_month, share, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
   });
   return { ...customer, shares, periods };
 }
@@ -347,9 +376,10 @@ export function registerDataRoutes(router) {
   // Employees
   router.get('/api/employees', ({ user }) => {
     const mine = isAdmin(user) ? null : myEmployeeId(user);
+    const pay = byCurrency(q.payByEmployeeCurrency.all(), 'employee_id');
     return q.employees.all()
       .filter((e) => isAdmin(user) || e.id === mine)
-      .map((e) => ({ ...e, active: Boolean(e.active) }));
+      .map((e) => ({ ...e, active: Boolean(e.active), pay: pay.get(e.id) || [] }));
   });
 
   router.post('/api/employees', ({ body, setStatus }) => {
@@ -364,7 +394,7 @@ export function registerDataRoutes(router) {
     try {
       const { lastInsertRowid } = q.insertEmployee.run(name, type, email, code);
       setStatus(201);
-      return { id: Number(lastInsertRowid), employee_code: code, name, email, active: true, type, split_count: 0, total_pay: 0 };
+      return { id: Number(lastInsertRowid), employee_code: code, name, email, active: true, type, split_count: 0, pay: [] };
     } catch (err) {
       employeeUniqueError(err, name, email, code);
       throw err;
@@ -406,7 +436,8 @@ export function registerDataRoutes(router) {
   // Customers
   router.get('/api/customers', () => {
     const shares = q.allShares.all();
-    return q.customers.all().map((c) => ({ ...c, shares: shares.filter((s) => s.customer_id === c.id) }));
+    const allocated = byCurrency(q.payByCustomerCurrency.all(), 'customer_id');
+    return q.customers.all().map((c) => ({ ...c, shares: shares.filter((s) => s.customer_id === c.id), allocated: allocated.get(c.id) || [] }));
   }, admin);
 
   router.post('/api/customers', ({ body, setStatus }) => {
@@ -415,12 +446,13 @@ export function registerDataRoutes(router) {
     if (!name) throw new HttpError(400, 'Enter the customer name.');
     if (!MONTH_RE.test(onboard)) throw new HttpError(400, 'Choose the onboard month.');
     const frequency = parseFrequency(body.frequency);
+    const currency = parseCurrency(body.currency);
     const shares = parseShares(body.shares, onboard, frequency);
 
     const id = transaction(() => {
       let customerId;
       try {
-        customerId = Number(q.insertCustomer.run(name, onboard, frequency).lastInsertRowid);
+        customerId = Number(q.insertCustomer.run(name, onboard, frequency, currency).lastInsertRowid);
       } catch (err) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;
@@ -450,6 +482,11 @@ export function registerDataRoutes(router) {
     const azdoClient = body.azdo_client === undefined ? current.azdo_client
       : String(body.azdo_client ?? '').split(',').map((n) => n.trim()).filter(Boolean).join(', ') || null;
     if (azdoClient && azdoClient.length > 200) throw new HttpError(400, 'Keep the Azure DevOps client name to 200 characters or fewer.');
+    // Revenue already entered is in the old currency, so the currency only changes before that.
+    const currency = body.currency === undefined ? current.currency : parseCurrency(body.currency);
+    if (currency !== current.currency && q.customerHasRevenue.get(params.id).has_revenue) {
+      throw new HttpError(409, `${current.name} already has revenue entered in ${current.currency}, so its currency can't change. Clear that revenue first, or add a new customer.`);
+    }
 
     // Each frequency has a different period length (1, 12 or 36 months), so switching replaces the
     // periods. That's only allowed before any revenue or split is entered.
@@ -461,7 +498,7 @@ export function registerDataRoutes(router) {
     const paidBefore = paidSnapshot(params.id);
     transaction(() => {
       try {
-        q.updateCustomer.run(name, onboard, frequency, azdoClient, params.id);
+        q.updateCustomer.run(name, onboard, frequency, azdoClient, currency, params.id);
       } catch (err) {
         if (isUniqueError(err)) throw new HttpError(409, `A customer called ${name} already exists.`);
         throw err;
@@ -485,20 +522,25 @@ export function registerDataRoutes(router) {
     q.deleteCustomer.run(params.id);
   }, admin);
 
-  // Today's USD to INR rate (European Central Bank reference rate via frankfurter.dev, no key
-  // needed), cached for an hour. The period editor fills it in; it can still be changed by hand.
-  router.get('/api/exchange-rate', async () => {
-    if (rateCache && Date.now() - rateCache.fetchedAt < 60 * 60 * 1000) return rateCache.value;
+  // Today's rate from a currency to INR (European Central Bank reference rate via frankfurter.dev,
+  // no key needed), cached for an hour. Offered when a payment is converted to INR; it can still be
+  // changed by hand. The ECB doesn't publish every currency (AED, for example).
+  router.get('/api/exchange-rate', async ({ req }) => {
+    const from = String(new URL(req.url, 'http://x').searchParams.get('from') || 'USD').toUpperCase();
+    if (!CURRENCIES.includes(from) || from === 'INR') throw new HttpError(400, 'Choose a currency other than INR.');
+    const cached = rateCache.get(from);
+    if (cached && Date.now() - cached.fetchedAt < 60 * 60 * 1000) return cached.value;
     try {
-      const res = await fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=INR', { signal: AbortSignal.timeout(8000) });
+      const res = await fetch(`https://api.frankfurter.dev/v1/latest?base=${from}&symbols=INR`, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const rate = Number(data?.rates?.INR);
       if (!Number.isFinite(rate) || rate <= 0) throw new Error('no INR rate');
-      rateCache = { fetchedAt: Date.now(), value: { rate, date: data.date, source: 'European Central Bank (frankfurter.dev)' } };
-      return rateCache.value;
+      const value = { from, rate, date: data.date, source: 'European Central Bank (frankfurter.dev)' };
+      rateCache.set(from, { fetchedAt: Date.now(), value });
+      return value;
     } catch {
-      throw new HttpError(502, "Couldn't get today's USD to INR rate. Type the rate in yourself.");
+      throw new HttpError(502, `Couldn't get today's ${from} to INR rate. Type the rate in yourself.`);
     }
   }, admin);
 
@@ -507,30 +549,25 @@ export function registerDataRoutes(router) {
   router.put('/api/periods/:id', ({ params, body }) => {
     const period = q.period.get(params.id);
     if (!period) throw new HttpError(404, 'Period not found.');
-    // Revenue is either typed in ₹, or worked out from a US dollar total:
-    // Total revenue ($) x % x USD to INR rate, rounded to paise.
-    let revenue;
-    let usd = { total: null, pct: null, rate: null };
-    if (body.total_usd != null && body.total_usd !== '') {
-      usd = {
-        total: toNumber(body.total_usd, 'Total revenue ($)'),
-        pct: toNumber(body.usd_pct, 'Percentage of total revenue'),
-        rate: toNumber(body.usd_inr_rate, 'USD to INR rate'),
-      };
-      if (usd.total < 0) throw new HttpError(400, 'Total revenue ($) cannot be negative.');
-      if (usd.pct < 0 || usd.pct > 1) throw new HttpError(400, 'The percentage of total revenue must be between 0% and 100%.');
-      if (usd.rate <= 0) throw new HttpError(400, 'The USD to INR rate must be more than 0.');
-      revenue = Math.round(usd.total * usd.pct * usd.rate * 100) / 100;
-    } else {
-      revenue = toNumber(body.revenue, 'Revenue');
-      if (revenue < 0) throw new HttpError(400, 'Revenue cannot be negative.');
-    }
+    // Revenue is entered in the customer's currency; share_pct of it is the employees' pool. With
+    // fx_rate (customers not in INR) the pool is converted to INR. Rounded to 2 decimals.
+    const { currency } = requireCustomer(period.customer_id);
+    const blank = body.amount == null || body.amount === '';
+    const usd = {
+      total: blank ? null : toNumber(body.amount, `Total revenue (${currency})`),
+      pct: blank ? null : toNumber(body.share_pct, 'Share for employees'),
+      rate: blank || currency === 'INR' || body.fx_rate == null || body.fx_rate === '' ? null : toNumber(body.fx_rate, `${currency} to INR rate`),
+    };
+    if (usd.total != null && usd.total < 0) throw new HttpError(400, 'Revenue cannot be negative.');
+    if (usd.pct != null && (usd.pct < 0 || usd.pct > 1)) throw new HttpError(400, 'The share for employees must be between 0% and 100%.');
+    if (usd.rate != null && usd.rate <= 0) throw new HttpError(400, `The ${currency} to INR rate must be more than 0.`);
+    const revenue = blank ? 0 : Math.round(usd.total * usd.pct * (usd.rate ?? 1) * 100) / 100;
     const list = Array.isArray(body.allocations) ? body.allocations : [];
     // Once anyone in this payment is marked paid, its revenue is locked and paid rows can't change.
     const paidRows = q.allocationsForPeriod.all(params.id).filter((a) => a.paid_on);
     if (paidRows.length) {
       const same = (x, y) => (x == null && y == null) || (x != null && y != null && Math.abs(x - y) < 1e-6);
-      if (!same(revenue, period.revenue) || !same(usd.total, period.total_usd) || !same(usd.pct, period.usd_pct) || !same(usd.rate, period.usd_inr_rate)) {
+      if (!same(revenue, period.revenue) || !same(usd.total, period.amount) || !same(usd.pct, period.share_pct) || !same(usd.rate, period.fx_rate)) {
         throw new HttpError(409, 'Someone in this payment is marked as paid, so its revenue is locked. Undo every paid mark to change it.');
       }
       for (const p of paidRows) {
@@ -616,11 +653,19 @@ export function registerDataRoutes(router) {
 
   // The "Monthly Summary" sheet: pay per employee per month, plus yearly totals.
   // For an Employee login: only their own row and months, and no company-wide revenue figures.
-  router.get('/api/summary', ({ user }) => {
+  // Pay in different currencies is never added together: the summary is for one currency
+  // (?currency=, INR by default), and lists the currencies there's pay in.
+  router.get('/api/summary', ({ user, req }) => {
     const self = !isAdmin(user);
     const mine = self ? myEmployeeId(user) : null;
-    let pay = q.payByEmployeeMonth.all();
-    let customerPay = q.payByEmployeeCustomerMonth.all();
+    const currencies = self
+      ? [...new Set(q.payments.all().filter((r) => r.employee_id === mine).map((r) => r.currency))]
+      : q.currenciesUsed.all().map((r) => r.currency);
+    currencies.sort((a, b) => CURRENCIES.indexOf(a) - CURRENCIES.indexOf(b));
+    const asked = String(new URL(req.url, 'http://x').searchParams.get('currency') || '').toUpperCase();
+    const currency = currencies.includes(asked) ? asked : currencies.includes('INR') ? 'INR' : currencies[0] || 'INR';
+    let pay = q.payByEmployeeMonth.all(currency);
+    let customerPay = q.payByEmployeeCustomerMonth.all(currency);
     if (self) {
       pay = pay.filter((p) => p.employee_id === mine);
       customerPay = customerPay.filter((p) => p.employee_id === mine);
@@ -636,7 +681,9 @@ export function registerDataRoutes(router) {
         const paidByMonth = {};
         const paidByYear = {};
         let paidTotal = 0;
+        let total = 0;
         for (const r of pay.filter((p) => p.employee_id === e.id)) {
+          total += r.pay;
           const y = r.start_month.slice(0, 4);
           byMonth[r.start_month] = (byMonth[r.start_month] || 0) + r.pay;
           byYear[y] = (byYear[y] || 0) + r.pay;
@@ -660,7 +707,7 @@ export function registerDataRoutes(router) {
           c.paidTotal += r.paid;
         }
         return {
-          id: e.id, name: e.name, active: Boolean(e.active), byMonth, byYear, total: e.total_pay, paidByMonth, paidByYear, paidTotal,
+          id: e.id, name: e.name, active: Boolean(e.active), byMonth, byYear, total, paidByMonth, paidByYear, paidTotal,
           customers: [...customers.values()],
         };
       })
@@ -675,9 +722,9 @@ export function registerDataRoutes(router) {
         : 'Your login isn\'t linked to an employee yet. Ask an admin to add your email to your entry on the Employees page.';
       const allocated = employees.reduce((s, e) => s + e.total, 0);
       const paid = employees.reduce((s, e) => s + e.paidTotal, 0);
-      return { self: true, message, months, years, employees, monthTotals, yearTotals, paidMonthTotals, paidYearTotals, totals: { revenue: null, allocated, paid } };
+      return { self: true, message, currency, currencies, months, years, employees, monthTotals, yearTotals, paidMonthTotals, paidYearTotals, totals: { revenue: null, allocated, paid } };
     }
-    const totals = q.totals.get();
-    return { self: false, months, years, employees, monthTotals, yearTotals, paidMonthTotals, paidYearTotals, totals };
+    const totals = q.totals.get(currency);
+    return { self: false, currency, currencies, months, years, employees, monthTotals, yearTotals, paidMonthTotals, paidYearTotals, totals };
   });
 }

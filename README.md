@@ -11,13 +11,17 @@ PaySplit splits customer revenue among employees. It replaces the
 
 It works the same way as the workbook:
 
-1. Each **customer** has an onboard month, a payment frequency and a revenue split
+1. Each **customer** has a **currency** (INR, USD, EUR, GBP, AUD, SGD or AED), an onboard month, a payment frequency and a revenue split
    between **Direct**, **Support** and **Others**, which must add up to 100% (for example 70 / 20 / 10).
 2. A **Yearly** customer gets one period, and its split holds for 12 months. A **Monthly**
    customer gets 12 monthly periods, and the split can change every month.
-3. In each period you enter the **revenue** and add **contributors** to each category,
-   each with a **weightage %**.
-4. **Pay = Revenue × Category % × Weightage %.** Pay is always calculated and never typed in.
+3. In each period you enter the **revenue** in the customer's currency and the **share for employees**
+   (10% by default), and add **contributors** to each category, each with a **weightage %**.
+4. **Pool = Revenue × Share %**, and **Pay = Pool × Category % × Weightage %.** Pay is always calculated
+   and never typed in. Pay is in the customer's currency; for a customer not in INR, **Convert to INR**
+   on a payment takes a rate (today's European Central Bank rate is offered) and pays that payment in INR.
+   Pay in different currencies is never added together: Summary shows one currency at a time, and
+   All payments and Employees show a total per currency.
 5. **Summary** shows each employee's pay per month and per year. **All payments** is the
    full log, and you can download it as a CSV file.
 
@@ -140,9 +144,10 @@ client/src/
 users                    id, name, email, role (admin/employee), is_owner, last_login_at, setup link
 sessions                 login sessions
 employees                id, employee_code, name, email, active, type
-customers                id, name, onboard_month, frequency, azdo_client
+customers                id, name, onboard_month, frequency, currency, azdo_client
 shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct
-periods                  id, customer_id, start_month, revenue, total_usd, usd_pct, usd_inr_rate
+periods                  id, customer_id, start_month, amount (customer currency), share_pct, fx_rate (to INR, or NULL),
+                         revenue (employees' pool = amount × share_pct × fx_rate, in the pay currency)
 allocations              id, period_id, category, employee_id, weightage, paid_on, paid_amount, paid_by
 payments (view)          every allocation with pay = revenue × category % × weightage, and the amount paid
 azdo_settings            key, value (Azure DevOps organisation and project)
@@ -183,7 +188,8 @@ Percentages are stored as fractions (0.7 = 70%).
 | PUT    | /api/customers/:id/features   | Set a customer's features enabled `{ features: [names] }` |
 | POST   | /api/deployment-options       | Add a choice `{ kind, name }` (features: anyone; other lists: admin) |
 | DELETE | /api/deployment-options/:id   | Admin: remove a choice                          |
-| GET    | /api/summary                  | Pay by month and by year                        |
+| GET    | /api/summary?currency=USD     | Pay by month and by year, in one currency (INR by default) |
+| GET    | /api/exchange-rate?from=USD   | Today's rate from a currency to INR             |
 | GET    | /api/users                    | Admin: list users with status and last login    |
 | POST   | /api/users                    | Admin: add `{ name, email, role }`, returns a setup link |
 | PATCH  | /api/users/:id                | Admin: rename or change role                    |

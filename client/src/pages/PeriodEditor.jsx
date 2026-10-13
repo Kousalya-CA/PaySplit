@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { money, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel, dayLabel } from '../format.js';
+import { money, moneyIn, currencySymbol, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel, dayLabel } from '../format.js';
 import { ErrorNote } from '../components/common.jsx';
 
 const CATEGORIES = ['Direct', 'Support', 'Others'];
@@ -21,24 +21,32 @@ const todayIso = () => new Date().toLocaleDateString('en-CA');
 // Weightage as a fraction: the exact stored value if the row wasn't retyped, otherwise what was typed.
 const fractionOf = (row) => (row.exact != null ? row.exact : parseNum(row.weightage) / 100);
 
-// Revenue from a US dollar total: Total revenue ($) x % x USD to INR rate. 10% by default.
-const usdFrom = (p) => ({
-  total: p.total_usd != null ? String(p.total_usd) : '',
-  pct: p.usd_pct != null ? toPctInput(p.usd_pct) : '10',
-  rate: p.usd_inr_rate != null ? String(p.usd_inr_rate) : '',
+// Revenue is entered in the customer's currency; share % of it (10% by default) is the employees'
+// pool. For a customer not in INR the pool can be converted to INR with a rate.
+const revenueFrom = (p) => ({
+  amount: p.amount != null ? String(p.amount) : '',
+  pct: p.share_pct != null ? toPctInput(p.share_pct) : '10',
+  rate: p.fx_rate != null ? String(p.fx_rate) : '',
 });
 const round2 = (n) => Math.round(n * 100) / 100;
 
-// Today's USD to INR rate, fetched once per page load and shared by every period.
-let ratePromise = null;
-const todaysRate = () => (ratePromise ||= api.exchangeRate().catch((err) => { ratePromise = null; throw err; }));
+// Today's rate from a currency to INR, fetched once per page load and shared by every period.
+const ratePromises = new Map();
+const todaysRate = (currency) => {
+  if (!ratePromises.has(currency)) {
+    ratePromises.set(currency, api.exchangeRate(currency).catch((err) => { ratePromises.delete(currency); throw err; }));
+  }
+  return ratePromises.get(currency);
+};
 
 // Edits one period: revenue plus the contributors in Direct, Support and Others.
 // Pay = Revenue x Category % x Weightage %, recalculated as you type.
 export default function PeriodEditor({ customer, period, prev, employees, onSaved, onDirtyChange }) {
   const label = periodLabel(period);
-  const [revenue, setRevenue] = useState(String(period.revenue));
-  const [usd, setUsd] = useState(() => usdFrom(period));
+  const cur = customer.currency;
+  const canConvert = cur !== 'INR';
+  const [rev, setRev] = useState(() => revenueFrom(period));
+  const [convert, setConvert] = useState(() => canConvert && period.fx_rate != null);
   const [today, setToday] = useState(null); // { rate, date } or { error }
   const [rows, setRows] = useState(() => rowsFrom(period.allocations));
   const [dirty, setDirty] = useState(false);
@@ -52,7 +60,8 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   // there are unsaved changes.
   useEffect(() => {
     if (dirty) return;
-    setRevenue(String(period.revenue));
+    setRev(revenueFrom(period));
+    setConvert(canConvert && period.fx_rate != null);
     setRows(rowsFrom(period.allocations));
   }, [period]);
 
@@ -86,22 +95,28 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     if (await paidAction('all', () => api.periods.markAllPaid(period.id, allDate), `Marked ${unpaidSaved.length} as paid.`)) setAllDate(null);
   };
 
-  // Fill in today's rate unless this payment was already saved with one.
-  useEffect(() => {
-    let live = true;
-    todaysRate()
-      .then((info) => { if (!live) return; setToday(info); setUsd((u) => (u.rate ? u : { ...u, rate: String(info.rate) })); })
-      .catch((err) => { if (live) setToday({ error: err.message }); });
-    return () => { live = false; };
-  }, []);
-
   const change = (fn) => { fn(); setDirty(true); setNotice(''); };
 
-  // With a dollar total, the ₹ revenue is worked out from it; otherwise it's typed in.
-  const usdOn = usd.total.trim() !== '';
-  const usdRevenue = round2(parseNum(usd.total) * (parseNum(usd.pct) / 100) * parseNum(usd.rate));
-  const rev = usdOn ? usdRevenue : parseNum(revenue);
-  const revValue = Number.isFinite(rev) ? rev : 0;
+  // While converting, offer today's rate, and fill it in if no rate is typed yet.
+  useEffect(() => {
+    if (!convert || !canConvert) return undefined;
+    let live = true;
+    todaysRate(cur)
+      .then((info) => { if (!live) return; setToday(info); setRev((r) => (r.rate ? r : { ...r, rate: String(info.rate) })); })
+      .catch((err) => { if (live) setToday({ error: err.message }); });
+    return () => { live = false; };
+  }, [convert, cur]);
+  const startConvert = () => change(() => setConvert(true));
+  const stopConvert = () => change(() => { setConvert(false); setRev((r) => ({ ...r, rate: '' })); });
+
+  // The employees' pool: amount x share % (x rate when converting), in the pay currency.
+  const converting = canConvert && convert;
+  const payCur = converting ? 'INR' : cur;
+  const fmt = (n) => money(n, payCur);
+  const blank = rev.amount.trim() === '';
+  const [amountNum, pctNum, rateNum] = [parseNum(rev.amount), parseNum(rev.pct), parseNum(rev.rate)];
+  const pool = blank ? 0 : round2(amountNum * (pctNum / 100) * (converting ? rateNum : 1));
+  const revValue = Number.isFinite(pool) ? pool : 0;
   // The revenue share covering this period. With none, every category gets 0%.
   const share = period.share;
   const categoryPct = share
@@ -127,9 +142,8 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
   const copyPrevious = () => change(() => setRows(rowsFrom(prev.allocations)));
   const discard = () => {
-    setRevenue(String(period.revenue));
-    const saved = usdFrom(period);
-    setUsd(saved.rate || !today?.rate ? saved : { ...saved, rate: String(today.rate) });
+    setRev(revenueFrom(period));
+    setConvert(canConvert && period.fx_rate != null);
     setRows(rowsFrom(period.allocations));
     setDirty(false);
     setError('');
@@ -137,13 +151,11 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
   const save = async () => {
     setError('');
-    if (usdOn) {
-      const [t, p, r] = [parseNum(usd.total), parseNum(usd.pct), parseNum(usd.rate)];
-      if (!Number.isFinite(t) || t < 0) return setError('Enter the total revenue in dollars as a number, for example 12000.');
-      if (!Number.isFinite(p) || p < 0 || p > 100) return setError('The percentage of total revenue must be between 0 and 100.');
-      if (!Number.isFinite(r) || r <= 0) return setError('Enter the USD to INR rate, for example 83.5.');
+    if (!blank) {
+      if (!Number.isFinite(amountNum) || amountNum < 0) return setError(`Enter the revenue in ${cur} as a number, for example 12000.`);
+      if (!Number.isFinite(pctNum) || pctNum < 0 || pctNum > 100) return setError('The share for employees must be between 0 and 100%.');
+      if (converting && (!Number.isFinite(rateNum) || rateNum <= 0)) return setError(`Enter the ${cur} to INR rate, for example 83.5, or remove the conversion.`);
     }
-    if (!Number.isFinite(rev) || rev < 0) return setError('Enter the revenue as a number, for example 10000.');
     const allocations = [];
     for (const cat of CATEGORIES) {
       for (const r of rows[cat]) {
@@ -157,10 +169,9 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     setSaving(true);
     try {
       const updated = await api.periods.save(period.id, {
-        revenue: rev,
-        total_usd: usdOn ? parseNum(usd.total) : null,
-        usd_pct: usdOn ? parseNum(usd.pct) / 100 : null,
-        usd_inr_rate: usdOn ? parseNum(usd.rate) : null,
+        amount: blank ? null : amountNum,
+        share_pct: blank ? null : pctNum / 100,
+        fx_rate: converting ? rateNum : null,
         allocations,
       });
       setDirty(false);
@@ -192,18 +203,17 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
             <p className="muted small">Uses the <strong>{share.name}</strong> revenue share.</p>
           ) : (
             <p className="warn-text small">
-              No revenue share covers {label}, so pay is ₹0. Add a share type for it in Edit customer,
+              No revenue share covers {label}, so pay is 0. Add a share type for it in Edit customer,
               or clear its revenue and split so it's removed the next time the shares are saved.
             </p>
           )}
         </div>
         <label className="revenue">
-          <span>{wording.revenue}{anyPaid && ' 🔒'}</span>
-          <span className="prefix-input">
-            <span aria-hidden="true">₹</span>
-            <input inputMode="decimal" readOnly={usdOn || anyPaid}
-              value={usdOn ? (Number.isFinite(usdRevenue) ? usdRevenue.toFixed(2) : '') : revenue}
-              onChange={(e) => change(() => setRevenue(e.target.value))} />
+          <span>{wording.revenue} ({cur}){anyPaid && ' 🔒'}</span>
+          <span className={`prefix-input${currencySymbol(cur).length > 1 ? ' wide' : ''}`}>
+            <span aria-hidden="true">{currencySymbol(cur)}</span>
+            <input inputMode="decimal" readOnly={anyPaid} value={rev.amount} placeholder="0"
+              onChange={(e) => change(() => setRev({ ...rev, amount: e.target.value }))} />
           </span>
         </label>
       </div>
@@ -214,44 +224,45 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
         </p>
       )}
       <fieldset className="usd-calc" disabled={anyPaid}>
-        <legend>Revenue from a total in US dollars</legend>
+        <legend className="sr-only">Employees' share</legend>
         <div className="row">
           <label>
-            <span>Total revenue</span>
-            <span className="prefix-input">
-              <span aria-hidden="true">$</span>
-              <input inputMode="decimal" value={usd.total} placeholder="Leave empty to type ₹ revenue"
-                onChange={(e) => change(() => setUsd({ ...usd, total: e.target.value }))} />
-            </span>
-          </label>
-          <label>
-            <span>Percentage of total</span>
+            <span>Share for employees</span>
             <span className="suffix-input">
-              <input inputMode="decimal" value={usd.pct} onChange={(e) => change(() => setUsd({ ...usd, pct: e.target.value }))} />
+              <input inputMode="decimal" value={rev.pct} onChange={(e) => change(() => setRev({ ...rev, pct: e.target.value }))} />
               <span aria-hidden="true">%</span>
             </span>
           </label>
-          <label>
-            <span>USD to INR rate</span>
-            <span className="prefix-input">
-              <span aria-hidden="true">₹</span>
-              <input inputMode="decimal" value={usd.rate} onChange={(e) => change(() => setUsd({ ...usd, rate: e.target.value }))} />
-            </span>
-          </label>
+          {converting && (
+            <label>
+              <span>1 {cur} in INR</span>
+              <span className="prefix-input">
+                <span aria-hidden="true">₹</span>
+                <input inputMode="decimal" value={rev.rate} placeholder="Rate" onChange={(e) => change(() => setRev({ ...rev, rate: e.target.value }))} />
+              </span>
+            </label>
+          )}
         </div>
         <p className="muted small">
-          {usdOn && Number.isFinite(usdRevenue)
-            ? <>${usd.total} × {usd.pct}% × ₹{usd.rate} = <strong>{money(usdRevenue)}</strong>, filled in as {wording.revenue.toLowerCase()}. </>
-            : 'Enter the total revenue in dollars to work out the ₹ revenue, or leave it empty and type the ₹ revenue above. '}
-          {today?.rate && (
+          {blank ? `Enter the revenue in ${cur}. ${rev.pct || 0}% of it is shared between the employees below. `
+            : Number.isFinite(pool)
+              ? <>{moneyIn(amountNum, cur)} × {rev.pct}%{converting && <> × ₹{rev.rate}</>} = <strong>{fmt(pool)}</strong> for employees{converting ? ', paid in INR' : `, paid in ${cur}`}. </>
+              : 'Check the numbers above. '}
+          {canConvert && !converting && <button type="button" className="link" onClick={startConvert}>Convert to INR</button>}
+          {converting && (
             <>
-              Today's rate: ₹{today.rate} per $1 ({dayLabel(today.date)}, European Central Bank).
-              {usd.rate !== String(today.rate) && (
-                <> <button type="button" className="link" onClick={() => change(() => setUsd({ ...usd, rate: String(today.rate) }))}>Use today's rate</button></>
+              {today?.rate && (
+                <>
+                  Today's rate: ₹{today.rate} per 1 {cur} ({dayLabel(today.date)}, European Central Bank).
+                  {rev.rate !== String(today.rate) && (
+                    <> <button type="button" className="link" onClick={() => change(() => setRev({ ...rev, rate: String(today.rate) }))}>Use today's rate</button></>
+                  )}{' '}
+                </>
               )}
+              {today?.error && <span className="warn-text">{today.error} </span>}
+              <button type="button" className="link" onClick={stopConvert}>Remove conversion</button>
             </>
           )}
-          {today?.error && <span className="warn-text">{today.error}</span>}
         </p>
       </fieldset>
 
@@ -272,16 +283,17 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
             busyPaid={busyPaid}
             onMarkPaid={markPaid}
             onUndoPaid={undoPaid}
+            fmt={fmt}
           />
         ))}
       </div>
 
       <div className="period-foot">
         <p>
-          Allocating <strong>{money(totalPaid)}</strong> of {money(revValue)}
-          {revValue - totalPaid > 0.005 && <span className="warn-text"> ({money(revValue - totalPaid)} not assigned)</span>}
+          Allocating <strong>{fmt(totalPaid)}</strong> of {fmt(revValue)}
+          {revValue - totalPaid > 0.005 && <span className="warn-text"> ({fmt(revValue - totalPaid)} not assigned)</span>}
           {period.allocations.length > 0 && (
-            <> · Paid <strong>{money(paidSum(period))}</strong>, pending <strong>{money(Math.max(0, period.paid - paidSum(period)))}</strong></>
+            <> · Paid <strong>{money(paidSum(period), period.currency)}</strong>, pending <strong>{money(Math.max(0, period.paid - paidSum(period)), period.currency)}</strong></>
           )}
         </p>
         <ErrorNote>{error}</ErrorNote>
@@ -318,7 +330,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
 const paidSum = (period) => period.allocations.reduce((s, a) => s + (a.paid_on ? a.paid_amount : 0), 0);
 
-function CategoryTable({ category, share, stats, rows, employees, onChange, onAdd, onRemove, onEqual, dirty, busyPaid, onMarkPaid, onUndoPaid }) {
+function CategoryTable({ category, share, stats, rows, employees, onChange, onAdd, onRemove, onEqual, dirty, busyPaid, onMarkPaid, onUndoPaid, fmt }) {
   const [dateFor, setDateFor] = useState({}); // row key -> paid date while "Mark paid" is open
   const anyPaidHere = rows.some((r) => r.paid_on);
   const { pool, sum } = stats;
@@ -330,7 +342,7 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
     <div className={`category cat-${category.toLowerCase()}`}>
       <div className="category-head">
         <h3>{category}</h3>
-        <p className="muted small">{pct(share)} of revenue: {money(pool)}</p>
+        <p className="muted small">{pct(share)} of revenue: {fmt(pool)}</p>
       </div>
 
       {rows.length === 0 ? (
@@ -367,7 +379,7 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
                       <span aria-hidden="true">%</span>
                     </span>
                   </td>
-                  <td className="num">{money(paid ? r.paid_amount : pay)}</td>
+                  <td className="num">{fmt(paid ? r.paid_amount : pay)}</td>
                   <td>{!paid && <button className="remove" onClick={() => onRemove(r.key)} aria-label="Remove contributor">×</button>}</td>
                 </tr>
                 {/* Paid status sits on its own line under the contributor so the three category columns keep their width. */}
@@ -418,9 +430,9 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
       </div>
       <p className={`small ${over ? 'error-text' : full || rows.length === 0 ? 'muted' : 'warn-text'}`}>
         {over ? `${+sum.toFixed(2)}% assigned. Reduce to 100% or less.`
-          : full ? `100% assigned, ${money(stats.paid)}.`
-          : rows.length === 0 ? `${money(pool)} not assigned.`
-          : `${+sum.toFixed(2)}% assigned. ${money(pool - stats.paid)} not assigned.`}
+          : full ? `100% assigned, ${fmt(stats.paid)}.`
+          : rows.length === 0 ? `${fmt(pool)} not assigned.`
+          : `${+sum.toFixed(2)}% assigned. ${fmt(pool - stats.paid)} not assigned.`}
       </p>
     </div>
   );

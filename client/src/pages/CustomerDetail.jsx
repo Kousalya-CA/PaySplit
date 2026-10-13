@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { monthLabel, periodLabel, pct, money, periodMonths } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
-import { FrequencyChoice } from './CustomersPage.jsx';
+import { FrequencyChoice, CurrencyField } from './CustomersPage.jsx';
 import RevenueShares, { sharesFromCustomer, relayoutShares, moveOnboarding, sharesForApi, shareMonths } from './RevenueShares.jsx';
 import PeriodEditor from './PeriodEditor.jsx';
 import TeamProgress from './TeamProgress.jsx';
@@ -77,7 +77,7 @@ export default function CustomerDetail({ id }) {
         <div>
           <h1>{customer.name}</h1>
           <p className="muted">
-            {customer.frequency} payment, onboarded {monthLabel(customer.onboard_month)}.
+            {customer.frequency} payment in {customer.currency}, onboarded {monthLabel(customer.onboard_month)}.
           </p>
           <ul className="share-list muted small">
             {customer.shares.map((s) => (
@@ -109,13 +109,13 @@ export default function CustomerDetail({ id }) {
         <h2 id="shares-label">Share types</h2>
         <div className="period-tabs" role="tablist" aria-labelledby="shares-label">
           {groups.map((g) => {
-            const revenue = g.periods.reduce((s, p) => s + p.revenue, 0);
+            const revenue = g.periods.reduce((s, p) => s + (p.amount || 0), 0);
             return (
               <button key={g.key} role="tab" aria-selected={g === activeGroup} disabled={!g.periods.length}
                 className={`period-tab ${revenue > 0 ? 'has-revenue' : ''}`} onClick={() => g.periods[0] && choosePeriod(g.periods[0].id)}>
                 <span>{g.name}</span>
                 <small>{g.months}</small>
-                <small>{revenue > 0 ? money(revenue) : 'No revenue'}</small>
+                <small>{revenue > 0 ? money(revenue, customer.currency) : 'No revenue'}</small>
               </button>
             );
           })}
@@ -129,7 +129,7 @@ export default function CustomerDetail({ id }) {
                 <button key={p.id} role="tab" aria-selected={p.id === selectedId}
                   className={`period-tab ${p.revenue > 0 ? 'has-revenue' : ''}`} onClick={() => choosePeriod(p.id)}>
                   <span>{periodLabel(p)}</span>
-                  <small>{p.revenue > 0 ? money(p.revenue) : 'No revenue'}</small>
+                  <small>{p.amount > 0 ? money(p.amount, customer.currency) : 'No revenue'}</small>
                 </button>
               ))}
             </div>
@@ -160,6 +160,8 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
   const [name, setName] = useState(customer.name);
   const [onboard, setOnboard] = useState(customer.onboard_month);
   const [frequency, setFrequency] = useState(customer.frequency);
+  const [currency, setCurrency] = useState(customer.currency);
+  const hasRevenue = customer.periods.some((p) => p.revenue !== 0 || (p.amount || 0) !== 0);
   const [azdoClient, setAzdoClient] = useState(customer.azdo_client || '');
   const [shares, setShares] = useState(() => sharesFromCustomer(customer));
   const changeFrequency = (f) => {
@@ -183,6 +185,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
         onboard_month: onboard,
         frequency,
         azdo_client: azdoClient,
+        currency,
         shares: sharesForApi(shares),
       }));
     } catch (err) {
@@ -210,6 +213,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
         <input value={azdoClient} onChange={(e) => setAzdoClient(e.target.value)} placeholder={name || 'Same as the customer name'} maxLength={200} />
         <small className="muted">How the Client field spells this customer on the sprint board. Leave empty to use the customer name; separate several spellings with commas.</small>
       </label>
+      <CurrencyField value={currency} onChange={setCurrency} disabled={hasRevenue} />
       <FrequencyChoice value={frequency} onChange={changeFrequency} />
       {onboard && <RevenueShares shares={shares} onChange={setShares} onboard={onboard} frequency={frequency} />}
       <p className="muted small">

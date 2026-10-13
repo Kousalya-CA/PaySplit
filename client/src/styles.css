@@ -398,3 +398,8 @@ a.secondary { display: inline-block; text-decoration: none; }
 .page .dep-add input { padding: .4rem .6rem; }
 .dep-features { max-width: 52rem; gap: .8rem; }
 .dep-features .dep-add { max-width: 26rem; margin: 0; }
+
+/* ---------- currency ---------- */
+.page .prefix-input.wide input { padding-left: 3.4rem; }
+.currency-field { max-width: 22rem; }
+.seg-top { margin-top: 0; }

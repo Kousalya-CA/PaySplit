@@ -194,11 +194,30 @@ if (!new Set(db.prepare('PRAGMA table_info(customers)').all().map((c) => c.name)
   db.exec('ALTER TABLE customers ADD COLUMN azdo_client TEXT');
 }
 
-// A period's revenue can be worked out from a total in US dollars:
-// revenue (₹) = total_usd x usd_pct x usd_inr_rate. NULL when the ₹ revenue was typed in directly.
+// A payment's revenue is entered in the customer's currency (amount); share_pct of it goes to the
+// employees (10% by default). fx_rate converts that to INR when the admin chooses to; NULL keeps pay
+// in the customer's currency. revenue is the employees' pool, in the pay currency:
+//   revenue = amount x share_pct x (fx_rate or 1)
+// These columns used to be total_usd, usd_pct and usd_inr_rate (a US dollar calculator).
 const periodColumns = new Set(db.prepare('PRAGMA table_info(periods)').all().map((c) => c.name));
-for (const col of ['total_usd', 'usd_pct', 'usd_inr_rate']) {
-  if (!periodColumns.has(col)) db.exec(`ALTER TABLE periods ADD COLUMN ${col} REAL`);
+for (const [from, to] of [['total_usd', 'amount'], ['usd_pct', 'share_pct'], ['usd_inr_rate', 'fx_rate']]) {
+  if (periodColumns.has(from) && !periodColumns.has(to)) db.exec(`ALTER TABLE periods RENAME COLUMN ${from} TO ${to}`);
+  else if (!periodColumns.has(to)) db.exec(`ALTER TABLE periods ADD COLUMN ${to} REAL`);
+}
+
+// Each customer has a currency. Before currencies existed, customers whose payments used the US
+// dollar calculator become USD (those payments stay converted to INR at their saved rate); the rest
+// stay INR. A payment where the ₹ revenue was typed becomes amount = revenue at 100%, so every
+// pay amount stays the same. (In a USD customer such a payment keeps a rate of 1, i.e. stays ₹.)
+if (!new Set(db.prepare('PRAGMA table_info(customers)').all().map((c) => c.name)).has('currency')) {
+  db.exec(`
+    ALTER TABLE customers ADD COLUMN currency TEXT NOT NULL DEFAULT 'INR';
+    UPDATE customers SET currency = 'USD'
+      WHERE EXISTS (SELECT 1 FROM periods p WHERE p.customer_id = customers.id AND p.amount IS NOT NULL);
+    UPDATE periods SET amount = revenue, share_pct = 1,
+      fx_rate = CASE (SELECT currency FROM customers c WHERE c.id = periods.customer_id) WHEN 'INR' THEN NULL ELSE 1 END
+      WHERE amount IS NULL AND revenue <> 0;
+  `);
 }
 
 // Every share now has a To month (the customer's periods are the payments inside its shares).
@@ -263,7 +282,13 @@ db.exec(`
                       WHEN 'Support' THEN s.support_pct
                       ELSE s.others_pct END AS pay,
     a.paid_on      AS paid_on,
-    CASE WHEN a.paid_on IS NULL THEN 0 ELSE a.paid_amount END AS paid
+    CASE WHEN a.paid_on IS NULL THEN 0 ELSE a.paid_amount END AS paid,
+    p.amount       AS amount,
+    p.share_pct    AS share_pct,
+    p.fx_rate      AS fx_rate,
+    c.currency     AS customer_currency,
+    -- pay, paid and revenue (the employees' pool) are in this currency
+    CASE WHEN p.fx_rate IS NOT NULL AND c.currency <> 'INR' THEN 'INR' ELSE c.currency END AS currency
   FROM allocations a
   JOIN periods   p ON p.id = a.period_id
   JOIN customers c ON c.id = p.customer_id

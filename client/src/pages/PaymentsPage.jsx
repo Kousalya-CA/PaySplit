@@ -1,36 +1,47 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, pct, dayLabel } from '../format.js';
+import { monthLabel, pct, dayLabel, moneyList, CURRENCIES } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 
 // Same as the "All Payments" sheet: one row per employee per category per period.
-// An Employee login gets only their own rows (the server filters them).
+// An Employee login gets only their own rows (the server filters them). Revenue is in the customer's
+// currency; pay is in the payment's currency (INR when the payment was converted).
 export default function PaymentsPage({ isAdmin }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
-  const [filters, setFilters] = useState({ customer: '', employee: '', year: '', status: '' });
+  const [filters, setFilters] = useState({ customer: '', employee: '', year: '', status: '', currency: '' });
 
   useEffect(() => { api.payments().then(setRows).catch((e) => setError(e.message)); }, []);
 
   const options = useMemo(() => {
     const list = rows || [];
     const uniq = (f) => [...new Set(list.map(f))].sort();
-    return { customers: uniq((r) => r.customer), employees: uniq((r) => r.employee), years: uniq((r) => r.start_month.slice(0, 4)) };
+    return {
+      customers: uniq((r) => r.customer), employees: uniq((r) => r.employee), years: uniq((r) => r.start_month.slice(0, 4)),
+      currencies: CURRENCIES.filter((c) => list.some((r) => r.currency === c)),
+    };
   }, [rows]);
 
   const visible = (rows || []).filter((r) =>
     (!filters.customer || r.customer === filters.customer) &&
     (!filters.employee || r.employee === filters.employee) &&
     (!filters.year || r.start_month.startsWith(filters.year)) &&
-    (!filters.status || (filters.status === 'paid' ? r.paid_on : !r.paid_on)));
-  const total = visible.reduce((s, r) => s + r.pay, 0);
-  const paidTotal = visible.reduce((s, r) => s + r.paid, 0);
+    (!filters.status || (filters.status === 'paid' ? r.paid_on : !r.paid_on)) &&
+    (!filters.currency || r.currency === filters.currency));
+  // Totals per currency: [{ currency, amount }]
+  const sumBy = (field) => options.currencies
+    .map((currency) => ({ currency, amount: visible.filter((r) => r.currency === currency).reduce((s, r) => s + r[field], 0) }))
+    .filter((x) => visible.some((r) => r.currency === x.currency));
+  const totals = sumBy('pay');
+  const paidTotals = sumBy('paid');
 
   const exportCsv = () => {
-    const header = ['Customer', 'Period', 'Month', 'Year', 'Category', 'Employee', 'Revenue', 'Category %', 'Weightage %', 'Pay', 'Status', 'Paid on', 'Paid amount'];
+    const header = ['Customer', 'Period', 'Month', 'Year', 'Category', 'Employee', 'Revenue', 'Revenue currency', 'Share for employees %',
+      'Rate to INR', 'Employee pool', 'Category %', 'Weightage %', 'Pay', 'Pay currency', 'Status', 'Paid on', 'Paid amount'];
     const lines = visible.map((r) => [
       r.customer, monthLabel(r.start_month), Number(r.start_month.slice(5)), Number(r.start_month.slice(0, 4)),
-      r.category, r.employee, r.revenue, +(r.category_pct * 100).toFixed(4), +(r.weightage * 100).toFixed(4), r.pay.toFixed(2),
+      r.category, r.employee, r.amount ?? '', r.customer_currency, r.share_pct != null ? +(r.share_pct * 100).toFixed(4) : '',
+      r.fx_rate ?? '', r.revenue, +(r.category_pct * 100).toFixed(4), +(r.weightage * 100).toFixed(4), r.pay.toFixed(2), r.currency,
       r.paid_on ? 'Paid' : 'Unpaid', r.paid_on || '', r.paid_on ? r.paid.toFixed(2) : '',
     ]);
     const csv = [header, ...lines].map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -81,6 +92,14 @@ export default function PaymentsPage({ isAdmin }) {
                 {options.years.map((c) => <option key={c}>{c}</option>)}
               </select>
             </label>
+            {options.currencies.length > 1 && (
+              <label><span>Currency</span>
+                <select value={filters.currency} onChange={setFilter('currency')}>
+                  <option value="">All currencies</option>
+                  {options.currencies.map((c) => <option key={c}>{c}</option>)}
+                </select>
+              </label>
+            )}
             <label><span>Status</span>
               <select value={filters.status} onChange={setFilter('status')}>
                 <option value="">Paid and unpaid</option>
@@ -112,10 +131,10 @@ export default function PaymentsPage({ isAdmin }) {
                     <td>{isAdmin ? <a href={`#/customers/${r.customer_id}`}>{r.customer}</a> : r.customer}</td>
                     <td>{r.category}</td>
                     <th scope="row">{r.employee}</th>
-                    <td><Money value={r.revenue} /></td>
+                    <td><Money value={r.amount} currency={r.customer_currency} /></td>
                     <td className="num">{pct(r.category_pct)}</td>
                     <td className="num">{pct(r.weightage)}</td>
-                    <td className="strong"><Money value={r.pay} /></td>
+                    <td className="strong"><Money value={r.pay} currency={r.currency} /></td>
                     <td>{r.paid_on ? <span className="paid-tag">✓ Paid {dayLabel(r.paid_on)}</span> : <span className="muted">Unpaid</span>}</td>
                   </tr>
                 ))}
@@ -123,8 +142,8 @@ export default function PaymentsPage({ isAdmin }) {
               <tfoot>
                 <tr>
                   <th scope="row" colSpan={7}>Total for {visible.length} row{visible.length === 1 ? '' : 's'}</th>
-                  <td><Money value={total} /></td>
-                  <td className="small">Paid <Money value={paidTotal} /></td>
+                  <td className="num">{moneyList(totals) || '–'}</td>
+                  <td className="small">Paid {moneyList(paidTotals) || '–'}</td>
                 </tr>
               </tfoot>
             </table>

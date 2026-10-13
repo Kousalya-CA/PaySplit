@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { moneyList } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 
 // Admins manage everyone. An Employee login sees only their own row (the server filters it).
@@ -163,7 +164,7 @@ export default function EmployeesPage({ isAdmin }) {
                   </td>
                   <td>{emp.active ? 'Active' : 'Inactive'}</td>
                   <td className="num">{emp.split_count}</td>
-                  <td><Money value={emp.total_pay} /></td>
+                  <td className="num">{moneyList(emp.pay || []) || <Money value={0} />}</td>
                   {isAdmin && (
                     <td className="row-actions">
                       {editing?.id !== emp.id && (
