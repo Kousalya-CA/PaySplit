@@ -1,7 +1,9 @@
-// What's deployed at each customer: product, services (each with its version), features enabled,
-// date and environment. Anyone signed in can see and add deployments (only customer names are
-// shared, never revenue); people can change or delete the ones they added, admins any of them.
-import { db } from '../db.js';
+// What's deployed at each customer: product, services (each with its version), date and
+// environment, plus the features enabled for the customer. Anyone signed in can see and add
+// deployments (only customer names are shared, never revenue); people can change or delete the ones
+// they added, admins any of them. Anyone can set a customer's features and add a new feature to the
+// list; only admins edit the other lists or remove choices.
+import { db, transaction } from '../db.js';
 import { HttpError } from '../http.js';
 
 const KINDS = ['product', 'service', 'feature', 'environment'];
@@ -14,10 +16,10 @@ const q = {
     ORDER BY d.deployed_on DESC, d.id DESC`),
   one: db.prepare('SELECT d.*, c.name AS customer FROM deployments d JOIN customers c ON c.id = d.customer_id WHERE d.id = ?'),
   insert: db.prepare(`
-    INSERT INTO deployments (customer_id, product, environment, deployed_on, services, features, notes, created_by_id, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    INSERT INTO deployments (customer_id, product, environment, deployed_on, services, notes, created_by_id, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
   update: db.prepare(`
-    UPDATE deployments SET customer_id = ?, product = ?, environment = ?, deployed_on = ?, services = ?, features = ?, notes = ?,
+    UPDATE deployments SET customer_id = ?, product = ?, environment = ?, deployed_on = ?, services = ?, notes = ?,
       updated_by = ?, updated_at = datetime('now')
     WHERE id = ?`),
   remove: db.prepare('DELETE FROM deployments WHERE id = ?'),
@@ -27,9 +29,20 @@ const q = {
   option: db.prepare('SELECT * FROM deployment_options WHERE id = ?'),
   insertOption: db.prepare('INSERT INTO deployment_options (kind, name) VALUES (?, ?)'),
   removeOption: db.prepare('DELETE FROM deployment_options WHERE id = ?'),
+  allFeatures: db.prepare('SELECT customer_id, name, added_by, added_at FROM customer_features ORDER BY customer_id, added_at, name'),
+  featuresFor: db.prepare('SELECT name, added_by, added_at FROM customer_features WHERE customer_id = ? ORDER BY added_at, name'),
+  addFeature: db.prepare('INSERT OR IGNORE INTO customer_features (customer_id, name, added_by) VALUES (?, ?, ?)'),
+  removeFeature: db.prepare('DELETE FROM customer_features WHERE customer_id = ? AND name = ?'),
 };
 
-const toApi = (d) => ({ ...d, services: JSON.parse(d.services), features: JSON.parse(d.features) });
+const toApi = ({ features, ...d }) => ({ ...d, services: JSON.parse(d.services) });
+
+// customer id -> [{ name, added_by, added_at }]
+function customerFeatures() {
+  const out = {};
+  for (const { customer_id: id, ...f } of q.allFeatures.all()) (out[id] ||= []).push(f);
+  return out;
+}
 
 function optionsByKind() {
   const out = Object.fromEntries(KINDS.map((k) => [k, []]));
@@ -75,13 +88,9 @@ function parseDeployment(body, current) {
     services.push({ name, version });
   }
 
-  if (body.features !== undefined && !Array.isArray(body.features)) throw new HttpError(400, 'Features must be a list.');
-  const keepFeatures = current ? current.features : [];
-  const features = [...new Set((body.features || []).map((f) => pick('feature', f, allowed, keepFeatures)))];
-
   const notes = String(body.notes ?? '').trim();
   if (notes.length > 2000) throw new HttpError(400, 'Keep the notes to 2000 characters or fewer.');
-  return { customerId, product, environment, deployedOn, services, features, notes: notes || null };
+  return { customerId, product, environment, deployedOn, services, notes: notes || null };
 }
 
 function requireOwn(id, user) {
@@ -97,13 +106,14 @@ export function registerDeploymentRoutes(router) {
   router.get('/api/deployments', () => ({
     deployments: q.all.all().map(toApi),
     customers: q.customers.all(),
+    customerFeatures: customerFeatures(),
     options: optionsByKind(),
   }));
 
   router.post('/api/deployments', ({ body, user, setStatus }) => {
     const d = parseDeployment(body);
     const id = q.insert.run(d.customerId, d.product, d.environment, d.deployedOn, JSON.stringify(d.services),
-      JSON.stringify(d.features), d.notes, user.id, user.name).lastInsertRowid;
+      d.notes, user.id, user.name).lastInsertRowid;
     setStatus(201);
     return toApi(q.one.get(id));
   });
@@ -112,7 +122,7 @@ export function registerDeploymentRoutes(router) {
     const current = requireOwn(params.id, user);
     const d = parseDeployment(body, current);
     q.update.run(d.customerId, d.product, d.environment, d.deployedOn, JSON.stringify(d.services),
-      JSON.stringify(d.features), d.notes, user.name, params.id);
+      d.notes, user.name, params.id);
     return toApi(q.one.get(params.id));
   });
 
@@ -121,10 +131,26 @@ export function registerDeploymentRoutes(router) {
     q.remove.run(params.id);
   });
 
-  // Admins manage the choices offered in the form.
-  router.post('/api/deployment-options', ({ body, setStatus }) => {
+  // The customer's features enabled: send the full list of names; ones not sent are switched off.
+  // A feature already on stays on even if it's since been taken off the list.
+  router.put('/api/customers/:id/features', ({ params, body, user }) => {
+    if (!q.customer.get(params.id)) throw new HttpError(404, 'Customer not found.');
+    if (!Array.isArray(body.features)) throw new HttpError(400, 'Features must be a list.');
+    const current = q.featuresFor.all(params.id).map((f) => f.name);
+    const allowed = optionsByKind();
+    const wanted = [...new Set(body.features.map((f) => pick('feature', f, allowed, current)))];
+    transaction(() => {
+      for (const name of current) if (!wanted.some((w) => w.toLowerCase() === name.toLowerCase())) q.removeFeature.run(params.id, name);
+      for (const name of wanted) q.addFeature.run(params.id, name, user.name);
+    });
+    return q.featuresFor.all(params.id);
+  });
+
+  // Anyone can add a feature to the list; admins manage the other lists and remove choices.
+  router.post('/api/deployment-options', ({ body, user, setStatus }) => {
     const kind = String(body.kind ?? '');
     if (!KINDS.includes(kind)) throw new HttpError(400, 'Unknown list.');
+    if (kind !== 'feature' && user.role !== 'admin') throw new HttpError(403, 'Only admins can do this.');
     const name = String(body.name ?? '').trim();
     if (!name) throw new HttpError(400, `Enter the ${KIND_LABEL[kind]} name.`);
     if (name.length > 60) throw new HttpError(400, 'Keep the name to 60 characters or fewer.');
@@ -136,7 +162,7 @@ export function registerDeploymentRoutes(router) {
     }
     setStatus(201);
     return optionsByKind();
-  }, { admin: true });
+  });
 
   router.delete('/api/deployment-options/:id', ({ params }) => {
     if (!q.option.get(params.id)) throw new HttpError(404, 'Choice not found.');

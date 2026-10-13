@@ -76,7 +76,7 @@ function DeployedCell({ customer, deployments }) {
   return (
     <a className="dep-cell" href={href}>
       {latest.map((d) => (
-        <span key={d.id} title={`${serviceText(d)}${d.features.length ? ` | Features: ${d.features.join(', ')}` : ''}`}>
+        <span key={d.id} title={serviceText(d)}>
           {d.product} · {d.environment} · {dayLabel(d.deployed_on)}
         </span>
       ))}

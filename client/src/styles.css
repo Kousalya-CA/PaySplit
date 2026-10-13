@@ -396,3 +396,5 @@ a.secondary { display: inline-block; text-decoration: none; }
 .dep-add { display: flex; gap: .4rem; margin-top: .6rem; }
 .dep-add .secondary { padding: .4rem .75rem; }
 .page .dep-add input { padding: .4rem .6rem; }
+.dep-features { max-width: 52rem; gap: .8rem; }
+.dep-features .dep-add { max-width: 26rem; margin: 0; }

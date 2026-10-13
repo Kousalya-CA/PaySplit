@@ -43,17 +43,18 @@ export default function DeploymentsPage({ user, customerId }) {
   const set = (key) => (e) => setFilters({ ...filters, [key]: e.target.value });
   const years = [...new Set(data.deployments.map((d) => d.deployed_on.slice(0, 4)))].sort().reverse();
   const used = (fn) => [...new Set(data.deployments.flatMap(fn))].sort((a, b) => a.localeCompare(b));
+  const featuresOf = (customerId) => (data.customerFeatures[customerId] || []).map((f) => f.name);
   const visible = data.deployments.filter((d) =>
     (!filters.customer || String(d.customer_id) === filters.customer) &&
     (!filters.product || d.product === filters.product) &&
     (!filters.service || d.services.some((s) => s.name === filters.service)) &&
-    (!filters.feature || d.features.includes(filters.feature)) &&
+    (!filters.feature || featuresOf(d.customer_id).includes(filters.feature)) &&
     (!filters.environment || d.environment === filters.environment) &&
     (!filters.year || d.deployed_on.startsWith(filters.year)));
 
   const downloadCsv = () => {
-    const header = ['Customer', 'Product', 'Environment', 'Deployed on', 'Services and versions', 'Features enabled', 'Notes', 'Entered by', 'Entered on', 'Last edited by', 'Last edited on'];
-    const rows = visible.map((d) => [d.customer, d.product, d.environment, d.deployed_on, serviceText(d), d.features.join('; '), d.notes || '',
+    const header = ['Customer', 'Product', 'Environment', 'Deployed on', 'Services and versions', 'Notes', 'Customer features enabled', 'Entered by', 'Entered on', 'Last edited by', 'Last edited on'];
+    const rows = visible.map((d) => [d.customer, d.product, d.environment, d.deployed_on, serviceText(d), d.notes || '', featuresOf(d.customer_id).join('; '),
       d.created_by, d.created_at, d.updated_by || '', d.updated_at || '']);
     const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const a = document.createElement('a');
@@ -70,7 +71,7 @@ export default function DeploymentsPage({ user, customerId }) {
       <div className="page-head">
         <div>
           <h1>Deployments</h1>
-          <p className="muted">What's deployed at each customer: product, service versions, features enabled and environment.</p>
+          <p className="muted">What's deployed at each customer: product, service versions and environment, plus each customer's features enabled.</p>
         </div>
         <div className="actions">
           {isAdmin && <button className="secondary" onClick={() => setManaging(!managing)}>{managing ? 'Close lists' : 'Edit lists'}</button>}
@@ -86,6 +87,10 @@ export default function DeploymentsPage({ user, customerId }) {
           onSaved={saved} onCancel={() => setEditing(null)} />
       )}
 
+      {filters.customer && (
+        <CustomerFeatures key={filters.customer} data={data} customerId={Number(filters.customer)} onChange={setData} />
+      )}
+
       <div className="filters">
         <label><span>Customer</span>
           <select value={filters.customer} onChange={set('customer')}>
@@ -95,7 +100,7 @@ export default function DeploymentsPage({ user, customerId }) {
         </label>
         {[['product', 'Product', 'All products', used((d) => [d.product])],
           ['service', 'Service', 'All services', used((d) => d.services.map((s) => s.name))],
-          ['feature', 'Feature', 'All features', used((d) => d.features)],
+          ['feature', 'Customer feature', 'All features', [...new Set(Object.values(data.customerFeatures).flat().map((f) => f.name))].sort((a, b) => a.localeCompare(b))],
           ['environment', 'Environment', 'All environments', used((d) => [d.environment])],
           ['year', 'Year', 'All years', years]].map(([key, label, all, list]) => (
           <label key={key}><span>{label}</span>
@@ -126,7 +131,7 @@ export default function DeploymentsPage({ user, customerId }) {
 
 // ---------- One customer's deployments: its own page at #/customers/:id/deployments (admins) ----------
 export function CustomerDeployments({ customerId, user }) {
-  const { data, error, setError, load } = useDeployments();
+  const { data, setData, error, setError, load } = useDeployments();
   const [editing, setEditing] = useState(null);
 
   if (!data) return error ? <ErrorNote>{error}</ErrorNote> : <Loading />;
@@ -146,6 +151,7 @@ export function CustomerDeployments({ customerId, user }) {
         {!editing && <button className="primary" onClick={() => setEditing('new')}>Add deployment</button>}
       </div>
       <ErrorNote>{error}</ErrorNote>
+      <CustomerFeatures data={data} customerId={customer.id} onChange={setData} />
       <>
           {editing && (
             <DeploymentForm data={data} initial={editing === 'new' ? null : editing} customerId={customer.id} lockCustomer
@@ -166,9 +172,6 @@ export function CustomerDeployments({ customerId, user }) {
                     <ul className="dep-versions">
                       {d.services.map((s) => <li key={s.name}><span>{s.name}</span><strong>{s.version}</strong></li>)}
                     </ul>
-                    {d.features.length > 0 && (
-                      <div className="chips">{d.features.map((f) => <span key={f} className="chip">{f}</span>)}</div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -200,7 +203,6 @@ function DeploymentTable({ rows, user, showCustomer, onEdit, onChanged, onError 
             <th scope="col">Product</th>
             <th scope="col">Environment</th>
             <th scope="col">Services and versions</th>
-            <th scope="col">Features enabled</th>
             <th scope="col">Notes</th>
             <th scope="col">Entered by</th>
             <th><span className="sr-only">Actions</span></th>
@@ -214,7 +216,6 @@ function DeploymentTable({ rows, user, showCustomer, onEdit, onChanged, onError 
               <td>{d.product}</td>
               <td>{d.environment}</td>
               <td className="dep-wrap">{d.services.map((s) => <div key={s.name}>{s.name} <strong>{s.version}</strong></div>)}</td>
-              <td className="dep-wrap">{d.features.length ? d.features.join(', ') : <span className="muted">–</span>}</td>
               <td className="dep-wrap dep-notes" title={d.notes || undefined}>{d.notes || <span className="muted">–</span>}</td>
               <td className="small">
                 {d.created_by}<div className="muted">{savedOn(d.created_at)}</div>
@@ -246,7 +247,6 @@ function DeploymentForm({ data, initial, customerId, lockCustomer, onSaved, onCa
   }));
   // service name -> version, for the services ticked
   const [versions, setVersions] = useState(() => Object.fromEntries((initial?.services || []).map((s) => [s.name, s.version])));
-  const [features, setFeatures] = useState(() => initial?.features || []);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -256,14 +256,12 @@ function DeploymentForm({ data, initial, customerId, lockCustomer, onSaved, onCa
     return [...names, ...current.filter((c) => c && !names.includes(c))];
   };
   const services = choices('service', initial?.services.map((s) => s.name));
-  const featureChoices = choices('feature', initial?.features);
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
   const toggleService = (name) => setVersions((v) => {
     const next = { ...v };
     if (name in next) delete next[name]; else next[name] = '';
     return next;
   });
-  const toggleFeature = (name) => setFeatures((f) => (f.includes(name) ? f.filter((x) => x !== name) : [...f, name]));
 
   const submit = async (e) => {
     e.preventDefault();
@@ -273,7 +271,6 @@ function DeploymentForm({ data, initial, customerId, lockCustomer, onSaved, onCa
       ...form,
       customer_id: Number(form.customer_id),
       services: services.filter((s) => s in versions).map((name) => ({ name, version: versions[name] })),
-      features: featureChoices.filter((f) => features.includes(f)),
     };
     try {
       await (initial ? api.deployments.update(initial.id, body) : api.deployments.create(body));
@@ -335,18 +332,6 @@ function DeploymentForm({ data, initial, customerId, lockCustomer, onSaved, onCa
         </div>
       </fieldset>
 
-      <fieldset>
-        <legend>Features enabled</legend>
-        <div className="chips">
-          {featureChoices.map((name) => (
-            <label key={name} className={`chip chip-check${features.includes(name) ? ' on' : ''}`}>
-              <input type="checkbox" checked={features.includes(name)} onChange={() => toggleFeature(name)} />
-              {name}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-
       <label><span>Notes</span>
         <textarea rows={3} value={form.notes} onChange={set('notes')} maxLength={2000} placeholder="Anything worth knowing about this deployment" />
       </label>
@@ -356,6 +341,73 @@ function DeploymentForm({ data, initial, customerId, lockCustomer, onSaved, onCa
         <button className="secondary" type="button" onClick={onCancel}>Cancel</button>
       </div>
     </form>
+  );
+}
+
+// The features enabled for a customer. Ticking or unticking saves straight away. Anyone can add a
+// new feature to the list here; it's switched on for this customer at the same time.
+function CustomerFeatures({ data, customerId, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState('');
+  const [error, setError] = useState('');
+  const enabled = data.customerFeatures[customerId] || [];
+  const names = enabled.map((f) => f.name);
+  const listed = data.options.feature.map((o) => o.name);
+  const choices = [...listed, ...names.filter((n) => !listed.includes(n))];
+
+  const save = async (next, options = data.options) => {
+    setBusy(true);
+    setError('');
+    try {
+      const saved = await api.deployments.setFeatures(customerId, next);
+      onChange({ ...data, options, customerFeatures: { ...data.customerFeatures, [customerId]: saved } });
+      return true;
+    } catch (e) {
+      setError(e.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggle = (name) => save(names.includes(name) ? names.filter((n) => n !== name) : [...names, name]);
+  const addNew = async (e) => {
+    e.preventDefault();
+    const name = adding.trim();
+    if (!name) return;
+    setError('');
+    let options = data.options;
+    const existing = listed.find((n) => n.toLowerCase() === name.toLowerCase());
+    if (!existing) {
+      try { options = await api.deployments.addOption('feature', name); } catch (err) { setError(err.message); return; }
+    }
+    const finalName = existing || name;
+    if (await save(names.includes(finalName) ? names : [...names, finalName], options)) setAdding('');
+  };
+
+  return (
+    <div className="panel dep-features">
+      <div>
+        <h2>Features enabled</h2>
+        <p className="muted small">For this customer. Tick to switch a feature on; changes save straight away.</p>
+      </div>
+      <ErrorNote>{error}</ErrorNote>
+      <div className="chips" aria-busy={busy}>
+        {choices.map((name) => {
+          const on = enabled.find((f) => f.name === name);
+          return (
+            <label key={name} className={`chip chip-check${on ? ' on' : ''}`}
+              title={on ? `Switched on by ${on.added_by || 'someone'}, ${savedOn(on.added_at)}` : undefined}>
+              <input type="checkbox" checked={Boolean(on)} disabled={busy} onChange={() => toggle(name)} />
+              {name}
+            </label>
+          );
+        })}
+      </div>
+      <form className="dep-add" onSubmit={addNew}>
+        <input aria-label="New feature" placeholder="Add another feature" value={adding} maxLength={60} onChange={(e) => setAdding(e.target.value)} />
+        <button className="secondary" type="submit" disabled={busy || !adding.trim()}>Add</button>
+      </form>
+    </div>
   );
 }
 
@@ -374,7 +426,7 @@ function ManageLists({ options, onChange }) {
   return (
     <div className="panel dep-lists">
       <h2>Lists</h2>
-      <p className="muted small">The choices offered when adding a deployment. Removing one doesn't change deployments already recorded.</p>
+      <p className="muted small">The choices offered when adding a deployment or a customer's features. Removing one doesn't change what's already recorded.</p>
       <ErrorNote>{error}</ErrorNote>
       <div className="dep-lists-grid">
         {LISTS.map(([kind, label]) => (

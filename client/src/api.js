@@ -80,6 +80,7 @@ export const api = {
     remove: (id) => request(`/deployments/${id}`, { method: 'DELETE' }),
     addOption: (kind, name) => request('/deployment-options', { method: 'POST', body: { kind, name } }),
     removeOption: (id) => request(`/deployment-options/${id}`, { method: 'DELETE' }),
+    setFeatures: (customerId, features) => request(`/customers/${customerId}/features`, { method: 'PUT', body: { features } }),
   },
   exchangeRate: () => request('/exchange-rate'),
   payments: () => request('/payments'),

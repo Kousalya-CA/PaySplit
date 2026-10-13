@@ -299,7 +299,8 @@ addEmployeeColumn('employee_code', 'TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_code ON employees(employee_code COLLATE NOCASE) WHERE employee_code IS NOT NULL');
 
 // What's deployed at each customer. Anyone signed in can add one. services is a JSON array of
-// { name, version } (each service has its own version); features is a JSON array of names.
+// { name, version } (each service has its own version). features is no longer used (see
+// customer_features) and stays '[]' for new deployments.
 // Names are stored as text, so removing a choice from the lists keeps old deployments as they were.
 db.exec(`
   CREATE TABLE IF NOT EXISTS deployments (
@@ -327,6 +328,25 @@ db.exec(`
     UNIQUE (kind, name)
   );
 `);
+// Features enabled belong to the customer, not to a deployment. Customers whose deployments were
+// entered with features (before this table) get those features once.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS customer_features (
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL COLLATE NOCASE,
+    added_by    TEXT,
+    added_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (customer_id, name)
+  );
+`);
+if (db.prepare("SELECT 1 FROM deployments WHERE features <> '[]' LIMIT 1").get()) {
+  db.exec(`
+    INSERT OR IGNORE INTO customer_features (customer_id, name, added_by, added_at)
+    SELECT d.customer_id, f.value, d.created_by, d.created_at FROM deployments d, json_each(d.features) f
+    ORDER BY d.deployed_on, d.id;
+    UPDATE deployments SET features = '[]';
+  `);
+}
 if (!db.prepare('SELECT 1 FROM deployment_options LIMIT 1').get()) {
   const addOption = db.prepare('INSERT INTO deployment_options (kind, name) VALUES (?, ?)');
   const defaults = {

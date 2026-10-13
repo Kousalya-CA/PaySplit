@@ -70,10 +70,12 @@ by the Client field, or the "Client name in Azure DevOps" set under Edit custome
 employee for all months, a year, or a From–To range of months, ranked by most closed.
 
 **Deployments** records what's installed at each customer: the product (e.g. Hybr), the services
-deployed with a version for each (Hybr, vConnect, Billing, CC), the features enabled (Billing CSP,
-Billing vConnect, vCenter, SPF, Service Catalog), the date, the environment and notes, plus who
-entered it and when. Anyone signed in can add one and change or delete their own; admins can change
-any and edit the lists of choices (**Edit lists**). Employees see only customer names there. Each
+deployed with a version for each (Hybr, vConnect, Billing, CC), the date, the environment and notes,
+plus who entered it and when. Anyone signed in can add one and change or delete their own; admins
+can change any and edit the lists of choices (**Edit lists**). **Features enabled** (Billing CSP,
+Billing vConnect, vCenter, SPF, Service Catalog) belong to the customer, not to a deployment: tick
+them on the customer's deployments page (or on Deployments with that customer chosen). Anyone can
+add a new feature to the list. Employees see only customer names there. Each
 customer has its own deployments page (the **Deployments** button on the customer page, or the
 **Deployed** column in the Customers table) with the latest deployment per product and environment
 and the full history.
@@ -147,8 +149,9 @@ azdo_settings            key, value (Azure DevOps organisation and project)
 azdo_areas               id, path, name, display_name
 azdo_iterations          id, area_id, path, name, start_date, finish_date
 deployments              id, customer_id, product, environment, deployed_on, services (JSON: name, version),
-                         features (JSON), notes, created_by, created_at, updated_by, updated_at
+                         notes, created_by, created_at, updated_by, updated_at
 deployment_options       id, kind (product/service/feature/environment), name
+customer_features        customer_id, name, added_by, added_at (features enabled for a customer)
 ```
 
 Percentages are stored as fractions (0.7 = 70%).
@@ -174,10 +177,11 @@ Percentages are stored as fractions (0.7 = 70%).
 | DELETE | /api/periods/:id              | Delete a period                                 |
 | GET    | /api/payments                 | All payment rows                                |
 | GET    | /api/deployments              | Deployments, customer names and the lists of choices |
-| POST   | /api/deployments              | Add `{ customer_id, product, environment, deployed_on, services: [{name, version}], features, notes }` |
+| POST   | /api/deployments              | Add `{ customer_id, product, environment, deployed_on, services: [{name, version}], notes }` |
 | PATCH  | /api/deployments/:id          | Change a deployment (the person who added it, or an admin) |
 | DELETE | /api/deployments/:id          | Delete a deployment (the person who added it, or an admin) |
-| POST   | /api/deployment-options       | Admin: add a choice `{ kind, name }`               |
+| PUT    | /api/customers/:id/features   | Set a customer's features enabled `{ features: [names] }` |
+| POST   | /api/deployment-options       | Add a choice `{ kind, name }` (features: anyone; other lists: admin) |
 | DELETE | /api/deployment-options/:id   | Admin: remove a choice                          |
 | GET    | /api/summary                  | Pay by month and by year                        |
 | GET    | /api/users                    | Admin: list users with status and last login    |
