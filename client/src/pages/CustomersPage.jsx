@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, pct } from '../format.js';
+import { monthLabel, pct, dayLabel } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 import RevenueShares, { newShares, relayoutShares, sharesForApi } from './RevenueShares.jsx';
+import { latestDeployments, serviceText } from './Deployments.jsx';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
@@ -11,8 +12,12 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState(null);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
+  const [deployments, setDeployments] = useState([]);
 
-  useEffect(() => { api.customers.list().then(setCustomers).catch((e) => setError(e.message)); }, []);
+  useEffect(() => {
+    api.customers.list().then(setCustomers).catch((e) => setError(e.message));
+    api.deployments.list().then((d) => setDeployments(d.deployments)).catch(() => {});
+  }, []);
 
   return (
     <section>
@@ -37,6 +42,7 @@ export default function CustomersPage() {
                 <th scope="col">Onboarding share (Direct / Support / Others)</th>
                 <th scope="col" className="num">Revenue</th>
                 <th scope="col" className="num">Allocated</th>
+                <th scope="col">Deployed</th>
               </tr>
             </thead>
             <tbody>
@@ -51,6 +57,7 @@ export default function CustomersPage() {
                   </td>
                   <td><Money value={c.total_revenue} /></td>
                   <td><Money value={c.total_paid} /></td>
+                  <td><DeployedCell customer={c} deployments={deployments} /></td>
                 </tr>
               ))}
             </tbody>
@@ -58,6 +65,22 @@ export default function CustomersPage() {
         </div>
       )}
     </section>
+  );
+}
+
+// The latest deployment of each product and environment, linking to the customer's Deployments section.
+function DeployedCell({ customer, deployments }) {
+  const latest = latestDeployments(deployments.filter((d) => d.customer_id === customer.id));
+  const href = `#/customers/${customer.id}/deployments`;
+  if (!latest.length) return <a className="muted small" href={href}>Add</a>;
+  return (
+    <a className="dep-cell" href={href}>
+      {latest.map((d) => (
+        <span key={d.id} title={`${serviceText(d)}${d.features.length ? ` | Features: ${d.features.join(', ')}` : ''}`}>
+          {d.product} · {d.environment} · {dayLabel(d.deployed_on)}
+        </span>
+      ))}
+    </a>
   );
 }
 

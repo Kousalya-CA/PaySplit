@@ -9,6 +9,7 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerDataRoutes } from './routes/data.js';
 import { registerUserRoutes } from './routes/users.js';
 import { registerAzdoRoutes } from './routes/azdo.js';
+import { registerDeploymentRoutes } from './routes/deployments.js';
 
 const PORT = process.env.PORT || 3000;
 const distDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'dist');
@@ -18,6 +19,7 @@ registerAuthRoutes(router);
 registerDataRoutes(router);
 registerUserRoutes(router);
 registerAzdoRoutes(router);
+registerDeploymentRoutes(router);
 
 async function handleApi(req, res, pathname) {
   const found = router.match(req.method, pathname);

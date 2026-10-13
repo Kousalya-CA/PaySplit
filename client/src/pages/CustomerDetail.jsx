@@ -88,7 +88,10 @@ export default function CustomerDetail({ id }) {
             ))}
           </ul>
         </div>
-        {!editing && <button className="secondary" onClick={() => setEditing(true)}>Edit customer</button>}
+        <div className="actions">
+          <a className="secondary" href={`#/customers/${customer.id}/deployments`}>Deployments</a>
+          {!editing && <button className="secondary" onClick={() => setEditing(true)}>Edit customer</button>}
+        </div>
       </div>
 
       <ErrorNote>{error}</ErrorNote>

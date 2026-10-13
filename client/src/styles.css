@@ -361,3 +361,38 @@ tr.inactive th, tr.inactive td { color: var(--muted); }
 .alloc .alloc-status td { padding-top: 0; padding-bottom: .45rem; }
 .alloc tr:not(.alloc-status) + .alloc-status td { border-bottom: 1px solid var(--line); }
 .alloc .paid-pick input { padding: .25rem .4rem; }
+
+/* ---------- deployments ---------- */
+.page textarea { font: inherit; color: var(--ink); background: var(--surface); border: 2px solid var(--line); border-radius: .5rem; padding: .55rem .75rem; width: 100%; resize: vertical; }
+.page textarea:focus { border-color: var(--ink); outline: none; box-shadow: 0 0 0 3px var(--green-soft); }
+.page input[type="checkbox"] { width: auto; accent-color: var(--ink); margin: 0; }
+a.secondary { display: inline-block; text-decoration: none; }
+.deployments h3 { margin: 1.25rem 0 .6rem; }
+.dep-form { max-width: 52rem; }
+.dep-services { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .6rem; }
+.dep-service { display: grid; gap: .4rem; padding: .6rem .75rem; border: 2px solid var(--line); border-radius: .6rem; }
+.dep-service.on { border-color: var(--ink); background: var(--paper); }
+.page .dep-service input:not([type="checkbox"]) { padding: .4rem .6rem; }
+.check { display: flex; align-items: center; gap: .5rem; cursor: pointer; font-weight: 700; }
+.page .check > span:first-child { display: inline; margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+.chip { display: inline-flex; align-items: center; gap: .35rem; padding: .2rem .65rem; border-radius: 1rem; background: var(--lilac); font-size: .85rem; font-weight: 600; }
+.chip-check { cursor: pointer; border: 2px solid var(--line); background: var(--surface); padding: .3rem .75rem; }
+.chip-check.on { border-color: var(--ink); background: var(--green-soft); }
+.chip-x { border: 0; background: none; padding: 0 .1rem; font-size: 1rem; line-height: 1; color: var(--muted); cursor: pointer; }
+.chip-x:hover { color: var(--danger); }
+.dep-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: .75rem; }
+.dep-card { display: grid; gap: .45rem; align-content: start; padding: .9rem 1rem; background: var(--surface); border: 2px solid var(--line); border-radius: .8rem; }
+.dep-card-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.dep-card-head .tag { margin: 0; }
+.dep-versions { list-style: none; margin: 0; padding: 0; display: grid; gap: .15rem; }
+.dep-versions li { display: flex; justify-content: space-between; gap: 1rem; font-size: .92rem; }
+.dep-table td.dep-wrap { white-space: normal; min-width: 9rem; }
+.dep-table td.dep-notes { max-width: 18rem; }
+.dep-cell { display: grid; gap: .1rem; font-weight: 600; font-size: .9rem; }
+.dep-lists { max-width: 60rem; }
+.dep-lists h3 { margin: 0 0 .5rem; font-size: 1rem; }
+.dep-lists-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 1.25rem; }
+.dep-add { display: flex; gap: .4rem; margin-top: .6rem; }
+.dep-add .secondary { padding: .4rem .75rem; }
+.page .dep-add input { padding: .4rem .6rem; }

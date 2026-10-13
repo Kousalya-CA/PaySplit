@@ -298,6 +298,46 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_email ON employees(emai
 addEmployeeColumn('employee_code', 'TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_code ON employees(employee_code COLLATE NOCASE) WHERE employee_code IS NOT NULL');
 
+// What's deployed at each customer. Anyone signed in can add one. services is a JSON array of
+// { name, version } (each service has its own version); features is a JSON array of names.
+// Names are stored as text, so removing a choice from the lists keeps old deployments as they were.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS deployments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    product     TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    deployed_on TEXT NOT NULL,                    -- 'YYYY-MM-DD'
+    services    TEXT NOT NULL DEFAULT '[]',
+    features    TEXT NOT NULL DEFAULT '[]',
+    notes       TEXT,
+    created_by_id INTEGER,
+    created_by  TEXT NOT NULL,                    -- name of the user who entered it
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_by  TEXT,
+    updated_at  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_deployments_customer ON deployments(customer_id);
+
+  -- The choices offered for a deployment's product, services, features and environment.
+  CREATE TABLE IF NOT EXISTS deployment_options (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL CHECK (kind IN ('product', 'service', 'feature', 'environment')),
+    name TEXT NOT NULL COLLATE NOCASE,
+    UNIQUE (kind, name)
+  );
+`);
+if (!db.prepare('SELECT 1 FROM deployment_options LIMIT 1').get()) {
+  const addOption = db.prepare('INSERT INTO deployment_options (kind, name) VALUES (?, ?)');
+  const defaults = {
+    product: ['Hybr'],
+    service: ['Hybr', 'vConnect', 'Billing', 'CC'],
+    feature: ['Billing CSP', 'Billing vConnect', 'vCenter', 'SPF', 'Service Catalog'],
+    environment: ['Production', 'UAT', 'Dev'],
+  };
+  for (const [kind, names] of Object.entries(defaults)) for (const name of names) addOption.run(kind, name);
+}
+
 // The owner is the permanent admin: OWNER_EMAIL if set, otherwise the first account created.
 if (!db.prepare('SELECT 1 FROM users WHERE is_owner = 1').get()) {
   const owner = (process.env.OWNER_EMAIL && db.prepare('SELECT id FROM users WHERE email = ?').get(process.env.OWNER_EMAIL))

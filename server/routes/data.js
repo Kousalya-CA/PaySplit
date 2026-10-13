@@ -478,6 +478,10 @@ export function registerDataRoutes(router) {
     if (paidSnapshot(params.id).size) {
       throw new HttpError(409, `${customer.name} has pay marked as paid, so it can't be deleted. Undo the paid marks first.`);
     }
+    const { n: deployments } = db.prepare('SELECT COUNT(*) AS n FROM deployments WHERE customer_id = ?').get(params.id);
+    if (deployments) {
+      throw new HttpError(409, `${customer.name} has ${deployments} deployment${deployments === 1 ? '' : 's'} recorded, so it can't be deleted. Delete them on the Deployments page first.`);
+    }
     q.deleteCustomer.run(params.id);
   }, admin);
 
