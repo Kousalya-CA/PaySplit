@@ -223,13 +223,25 @@ function parseShares(list, onboard, frequency) {
   return shares;
 }
 
-// The payments inside one share: every month for Monthly. A Yearly or Three Years share is one
-// payment covering From to To, paid in its payment month (the From month unless one was chosen).
+// The payments inside one share: every month for Monthly, one payment for Yearly.
+// Three Years creates 3 yearly periods: Year 1 (from_month), Year 2 (+12 months), Year 3 (+24 months).
 function paymentMonths(share, frequency) {
-  if (frequency !== 'Monthly') return [share.payment_month || share.from_month];
-  const months = [];
-  for (let m = share.from_month; m <= share.to_month; m = addMonths(m, 1)) months.push(m);
-  return months;
+  if (frequency === 'Monthly') {
+    const months = [];
+    for (let m = share.from_month; m <= share.to_month; m = addMonths(m, 1)) months.push(m);
+    return months;
+  }
+  if (frequency === 'Three Years') {
+    // Create 3 yearly periods: Year 1, Year 2, Year 3
+    const baseMonth = share.payment_month || share.from_month;
+    return [
+      baseMonth,
+      addMonths(baseMonth, 12),
+      addMonths(baseMonth, 24),
+    ];
+  }
+  // Yearly: one payment
+  return [share.payment_month || share.from_month];
 }
 
 // Make a customer's periods match its shares. For Yearly and Three Years a share has one payment,

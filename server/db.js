@@ -67,7 +67,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_shares_customer ON shares(customer_id);
 
-  -- One row per billing period (36 months for Three Years, a year for Yearly, a month for Monthly)
+  -- One row per billing period (Three Years creates 3 yearly periods, Yearly creates 1 yearly period, Monthly creates monthly periods)
   CREATE TABLE IF NOT EXISTS periods (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -142,18 +142,8 @@ if (!customersSql.includes('Three Years')) {
   }
 }
 
-// Three Years customers used to get three 12-month periods; now they get one 36-month period.
-// Remove the old empty Year 2 / Year 3 periods (any that start between the 36-month steps).
-// Periods with revenue or a split are kept so no entered pay is lost.
-db.exec(`
-  DELETE FROM periods
-  WHERE customer_id IN (SELECT id FROM customers WHERE frequency = 'Three Years')
-    AND ((CAST(substr(start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(start_month, 6, 2) AS INTEGER))
-       - (SELECT CAST(substr(onboard_month, 1, 4) AS INTEGER) * 12 + CAST(substr(onboard_month, 6, 2) AS INTEGER)
-          FROM customers c WHERE c.id = periods.customer_id)) % 36 <> 0
-    AND revenue = 0
-    AND NOT EXISTS (SELECT 1 FROM allocations a WHERE a.period_id = periods.id);
-`);
+// Three Years customers get three 12-month periods: Year 1, Year 2 (+12 months), Year 3 (+24 months).
+// Each year has its own revenue and contributor split, just like a Yearly customer's period.
 
 // Customers used to hold one Direct/Support/Others split. Move it into shares so nothing's pay
 // changes: Monthly customers get one ongoing "Onboarding" share; Yearly and Three Years customers

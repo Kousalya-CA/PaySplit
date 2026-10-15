@@ -2,10 +2,10 @@ import { addMonths, monthLabel, parseNum, periodMonths } from '../format.js';
 
 // Revenue shares: the Direct/Support/Others split for a range of months. The first share is
 // always "Onboarding" and starts in the onboard month: Monthly runs to a To month you choose
-// (12 months by default); Yearly and Three Years covers the first 12 or 36 months and is paid once,
-// in a payment month you choose. Share types added after it (Renewal, ...) have From and To months.
-// The customer's periods are the payments inside its shares: every month for Monthly, one payment
-// per share (From to To) for Yearly and Three Years.
+// (12 months by default); Yearly covers 12 months and is paid once; Three Years covers 36 months
+// and creates 3 yearly payments (Year 1, Year 2, Year 3). Share types added after it (Renewal, ...)
+// have From and To months. The customer's periods are the payments inside its shares: every month
+// for Monthly, one payment per share for Yearly, three yearly payments for Three Years.
 let nextKey = 1;
 const pctText = (fraction) => String(+(fraction * 100).toFixed(4));
 // Default length of a share: 12 months for Monthly and Yearly, 36 for Three Years.
@@ -139,7 +139,9 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
             </div>
             <p className="muted small">
               {oneTime
-                ? `One-time payment for the first ${span} months, paid in ${s.payment_month ? monthLabel(s.payment_month) : 'the payment month'}.`
+                ? frequency === 'Three Years'
+                  ? `Three yearly payments for the 36-month contract: Year 1 in ${s.payment_month ? monthLabel(s.payment_month) : 'the payment month'}, Year 2 (+12 months), Year 3 (+24 months).`
+                  : `One-time payment for the first ${span} months, paid in ${s.payment_month ? monthLabel(s.payment_month) : 'the payment month'}.`
                 : monthly
                   ? `${plural(monthCount(s), 'monthly payment')}${first ? ', starting in the onboard month' : ''}.`
                   : `One payment covering ${plural(monthCount(s), 'month')}.`}

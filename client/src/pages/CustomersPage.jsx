@@ -89,7 +89,7 @@ function DeployedCell({ customer, deployments }) {
 const FREQUENCY_OPTIONS = [
   ['Monthly', 'Enter revenue and the split each month. PaySplit creates 12 months from the onboard month.'],
   ['Yearly', 'Enter the annual revenue once. The split holds for 12 months from the onboard month.'],
-  ['Three Years', 'Enter the revenue for the whole contract once. The split holds for 36 months from the onboard month.'],
+  ['Three Years', 'A 36-month contract with 3 yearly periods: Year 1, Year 2, Year 3. Each year has its own revenue and split.'],
 ];
 
 // The currency the customer is billed in. Revenue is entered in it, and pay is in it unless a
