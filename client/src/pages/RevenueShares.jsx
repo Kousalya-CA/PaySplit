@@ -147,36 +147,41 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
               {first && s.from_month && onboard && s.from_month !== onboard && ` Onboarded ${monthLabel(onboard)}; billing starts ${monthLabel(s.from_month)}.`}
             </p>
 
-            <div className="row share-line">
-              <label>
-                <span>3. Payment type</span>
-                <select value={s.payout_type || 'once'} onChange={(e) => changeType(s, e.target.value)}>
-                  <option value="once">One time</option>
-                  <option value="custom">Custom (split over months)</option>
-                </select>
-              </label>
-              {custom && (
-                <>
-                  <label className="month-field">
-                    <span>Payout from</span>
-                    <input type="month" value={s.pay_from} required onChange={(e) => update(s.key, { pay_from: e.target.value })} />
-                  </label>
-                  <label className="month-field">
-                    <span>Payout to</span>
-                    <input type="month" value={s.pay_to} min={s.pay_from} required onChange={(e) => update(s.key, { pay_to: e.target.value })} />
-                  </label>
-                </>
-              )}
-            </div>
-            <p className="muted small">
-              {!custom ? 'Each payment\'s employees\' share is paid once, in its payment month.'
-                : payParts === 0 ? 'Choose the payout To month (on or after From).'
-                  : `Each payment's employees' share is split into ${plural(payParts, 'monthly part')}: ${monthLabel(s.pay_from)} to ${monthLabel(s.pay_to)} for the first payment${(monthly ? months : yearly) > 1 ? ', moving along for each later payment' : ''}.`}
-              {' '}Each payment can still be changed on its own page.
-            </p>
+            {/* Monthly customers have a payment (with its own amount and weightages) every month, so no payment type. */}
+            {!monthly && (
+              <>
+              <div className="row share-line">
+                <label>
+                  <span>3. Payment type</span>
+                  <select value={s.payout_type || 'once'} onChange={(e) => changeType(s, e.target.value)}>
+                    <option value="once">One time</option>
+                    <option value="custom">Custom (split over months)</option>
+                  </select>
+                </label>
+                {custom && (
+                  <>
+                    <label className="month-field">
+                      <span>Payout from</span>
+                      <input type="month" value={s.pay_from} required onChange={(e) => update(s.key, { pay_from: e.target.value })} />
+                    </label>
+                    <label className="month-field">
+                      <span>Payout to</span>
+                      <input type="month" value={s.pay_to} min={s.pay_from} required onChange={(e) => update(s.key, { pay_to: e.target.value })} />
+                    </label>
+                  </>
+                )}
+              </div>
+              <p className="muted small">
+                {!custom ? 'Each payment\'s employees\' share is paid once, in its payment month.'
+                  : payParts === 0 ? 'Choose the payout To month (on or after From).'
+                    : `Each payment's employees' share is split into ${plural(payParts, 'monthly part')}: ${monthLabel(s.pay_from)} to ${monthLabel(s.pay_to)} for the first payment${(monthly ? months : yearly) > 1 ? ', moving along for each later payment' : ''}.`}
+                {' '}Each payment can still be changed on its own page.
+              </p>
+              </>
+            )}
 
             <div className="row">
-              {[['direct', '4. Direct'], ['support', 'Support'], ['others', 'Others']].map(([k, label]) => (
+              {[['direct', monthly ? '3. Direct' : '4. Direct'], ['support', 'Support'], ['others', 'Others']].map(([k, label]) => (
                 <label key={k}>
                   <span>{label}</span>
                   <span className="suffix-input">

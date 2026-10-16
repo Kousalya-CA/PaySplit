@@ -279,73 +279,147 @@ for (const [col, type] of [['paid_on', 'TEXT'], ['paid_amount', 'REAL'], ['paid_
   `);
 }
 
-db.exec(`
-  -- Pay is never stored: it is always Revenue x Category % x Weightage %
-  -- (the same formula as the Excel workbook), using the share that covers the period.
-  -- Allocations in a period with no share are left out (pay 0).
-  -- paid is the amount marked as paid (0 while unpaid). Rebuilt on every start so new columns appear.
-  DROP VIEW IF EXISTS payments;
-  CREATE VIEW payments AS
-  SELECT
-    a.id           AS id,
-    c.id           AS customer_id,
-    c.name         AS customer,
-    c.frequency    AS frequency,
-    p.id           AS period_id,
-    p.start_month  AS start_month,
-    a.category     AS category,
-    e.id           AS employee_id,
-    e.name         AS employee,
-    s.name         AS share,
-    p.revenue      AS revenue,
-    CASE a.category WHEN 'Direct' THEN s.direct_pct
-                    WHEN 'Support' THEN s.support_pct
-                    ELSE s.others_pct END AS category_pct,
-    a.weightage    AS weightage,
-    p.revenue * a.weightage *
+// Custom payments (Yearly and Three Years): each month of the payout has its own contributors and
+// weightages, so a contributor row (allocation) can belong to one month: part 1 is the first payout
+// month. NULL = the whole payment (one time, and every Monthly payment). The table is rebuilt once to
+// add the column, because the "one row per contributor and category" rule has to include it.
+if (!db.prepare('PRAGMA table_info(allocations)').all().some((c) => c.name === 'part')) {
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.exec(`
+      BEGIN;
+      DROP VIEW IF EXISTS pay_parts;
+      DROP VIEW IF EXISTS payments;
+      CREATE TABLE allocations_new (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        period_id   INTEGER NOT NULL REFERENCES periods(id) ON DELETE CASCADE,
+        part        INTEGER,
+        category    TEXT NOT NULL CHECK (category IN ('Direct', 'Support', 'Others')),
+        employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+        weightage   REAL NOT NULL CHECK (weightage >= 0 AND weightage <= 1),
+        paid_on     TEXT,
+        paid_amount REAL,
+        paid_by     TEXT,
+        UNIQUE (period_id, part, category, employee_id)
+      );
+      INSERT INTO allocations_new (id, period_id, part, category, employee_id, weightage, paid_on, paid_amount, paid_by)
+        SELECT id, period_id, NULL, category, employee_id, weightage, paid_on, paid_amount, paid_by FROM allocations;
+      DROP TABLE allocations;
+      ALTER TABLE allocations_new RENAME TO allocations;
+      COMMIT;
+    `);
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
+// The payments views. payment_base has one row per contributor with its share's category % and the
+// payout (payment date, and for custom payments the months: the payment's own, else the share's moved
+// along to this payment, else 12 months from the payment month). Monthly payments are always one
+// time. payments adds pay = the pool for its month x Category % x Weightage %: a row for one month of
+// a custom payment gets that month's equal part of the pool (the last month takes the rounding), a
+// whole-payment row gets the whole pool. pay_parts has one row per month: a month's own row, or (for
+// rows saved before months had their own weightages) the row split evenly over the months.
+// Pay is never stored. Rebuilt on every start so new columns appear.
+{
+  const MI = (x) => `(CAST(substr(${x}, 1, 4) AS INTEGER) * 12 + CAST(substr(${x}, 6, 2) AS INTEGER))`;
+  const K = `(${MI('p.start_month')} - ${MI('COALESCE(s.payment_month, s.from_month)')})`;
+  const SHIFT = (col) => `CASE WHEN ${col} IS NULL THEN NULL ELSE substr(date(${col} || '-01', (CASE WHEN ${K} >= 0 THEN '+' ELSE '' END) || ${K} || ' months'), 1, 7) END`;
+  const CUSTOM = `(c.frequency <> 'Monthly' AND COALESCE(p.payout_type, s.payout_type, 'once') = 'custom')`;
+  const FROM = `COALESCE(p.pay_from, ${SHIFT('s.pay_from')}, p.pay_month, p.start_month)`;
+  const TO = `COALESCE(p.pay_to, ${SHIFT('s.pay_to')})`;
+  db.exec(`
+    DROP VIEW IF EXISTS pay_parts;
+    DROP VIEW IF EXISTS payments;
+    DROP VIEW IF EXISTS payment_base;
+    CREATE VIEW payment_base AS
+    SELECT
+      a.id           AS id,
+      c.id           AS customer_id,
+      c.name         AS customer,
+      c.frequency    AS frequency,
+      p.id           AS period_id,
+      p.start_month  AS start_month,
+      a.category     AS category,
+      e.id           AS employee_id,
+      e.name         AS employee,
+      s.name         AS share,
+      p.revenue      AS revenue,
       CASE a.category WHEN 'Direct' THEN s.direct_pct
                       WHEN 'Support' THEN s.support_pct
-                      ELSE s.others_pct END AS pay,
-    a.paid_on      AS paid_on,
-    CASE WHEN a.paid_on IS NULL THEN 0 ELSE a.paid_amount END AS paid,
-    p.amount       AS amount,
-    p.share_pct    AS share_pct,
-    p.fx_rate      AS fx_rate,
-    c.currency     AS customer_currency,
-    -- payout: the payment date, and the months its share is paid in (one part for one time)
-    COALESCE(p.pay_month, p.start_month) AS pay_month,
-    CASE WHEN COALESCE(p.payout_type, s.payout_type, 'once') = 'custom' THEN 'custom' ELSE 'once' END AS payout_type,
-    -- custom months: the payment's own, else the share's moved along to this payment, else from the
-    -- payment month for 12 months
-    CASE WHEN COALESCE(p.payout_type, s.payout_type, 'once') = 'custom'
-         THEN COALESCE(p.pay_from, CASE WHEN s.pay_from IS NULL THEN NULL ELSE substr(date(s.pay_from || '-01', (CASE WHEN ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) >= 0 THEN '+' ELSE '' END) || ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) || ' months'), 1, 7) END, p.pay_month, p.start_month) ELSE COALESCE(p.pay_month, p.start_month) END AS part_from,
-    CASE WHEN COALESCE(p.payout_type, s.payout_type, 'once') <> 'custom' THEN 1
-         WHEN COALESCE(p.pay_to, CASE WHEN s.pay_to IS NULL THEN NULL ELSE substr(date(s.pay_to || '-01', (CASE WHEN ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) >= 0 THEN '+' ELSE '' END) || ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) || ' months'), 1, 7) END) IS NULL THEN 12
-         ELSE MAX(1, (CAST(substr(COALESCE(p.pay_to, CASE WHEN s.pay_to IS NULL THEN NULL ELSE substr(date(s.pay_to || '-01', (CASE WHEN ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) >= 0 THEN '+' ELSE '' END) || ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) || ' months'), 1, 7) END), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(p.pay_to, CASE WHEN s.pay_to IS NULL THEN NULL ELSE substr(date(s.pay_to || '-01', (CASE WHEN ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) >= 0 THEN '+' ELSE '' END) || ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) || ' months'), 1, 7) END), 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(p.pay_from, CASE WHEN s.pay_from IS NULL THEN NULL ELSE substr(date(s.pay_from || '-01', (CASE WHEN ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) >= 0 THEN '+' ELSE '' END) || ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) || ' months'), 1, 7) END, p.pay_month, p.start_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(p.pay_from, CASE WHEN s.pay_from IS NULL THEN NULL ELSE substr(date(s.pay_from || '-01', (CASE WHEN ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) >= 0 THEN '+' ELSE '' END) || ((CAST(substr(p.start_month, 1, 4) AS INTEGER) * 12 + CAST(substr(p.start_month, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(s.payment_month, s.from_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(s.payment_month, s.from_month), 6, 2) AS INTEGER))) || ' months'), 1, 7) END, p.pay_month, p.start_month), 6, 2) AS INTEGER)) + 1) END AS parts,
-    -- pay, paid and revenue (the employees' pool) are in this currency
-    CASE WHEN p.fx_rate IS NOT NULL AND c.currency <> 'INR' THEN 'INR' ELSE c.currency END AS currency
-  FROM allocations a
-  JOIN periods   p ON p.id = a.period_id
-  JOIN customers c ON c.id = p.customer_id
-  JOIN employees e ON e.id = a.employee_id
-  JOIN shares    s ON s.customer_id = c.id AND p.start_month >= s.from_month
-                  AND (s.to_month IS NULL OR p.start_month <= s.to_month);
+                      ELSE s.others_pct END AS category_pct,
+      a.weightage    AS weightage,
+      a.part         AS alloc_part,
+      a.paid_on      AS paid_on,
+      CASE WHEN a.paid_on IS NULL THEN 0 ELSE a.paid_amount END AS paid,
+      p.amount       AS amount,
+      p.share_pct    AS share_pct,
+      p.fx_rate      AS fx_rate,
+      c.currency     AS customer_currency,
+      COALESCE(p.pay_month, p.start_month) AS pay_month,
+      CASE WHEN ${CUSTOM} THEN 'custom' ELSE 'once' END AS payout_type,
+      CASE WHEN ${CUSTOM} THEN ${FROM} ELSE COALESCE(p.pay_month, p.start_month) END AS part_from,
+      CASE WHEN NOT ${CUSTOM} THEN 1 WHEN ${TO} IS NULL THEN 12 ELSE MAX(1, ${MI(TO)} - ${MI(FROM)} + 1) END AS parts,
+      -- pay, paid and revenue (the employees' pool) are in this currency
+      CASE WHEN p.fx_rate IS NOT NULL AND c.currency <> 'INR' THEN 'INR' ELSE c.currency END AS currency
+    FROM allocations a
+    JOIN periods   p ON p.id = a.period_id
+    JOIN customers c ON c.id = p.customer_id
+    JOIN employees e ON e.id = a.employee_id
+    JOIN shares    s ON s.customer_id = c.id AND p.start_month >= s.from_month
+                    AND (s.to_month IS NULL OR p.start_month <= s.to_month);
 
-  -- One row per monthly part of each contributor's pay (one row for one time). Each part is pay split
-  -- evenly, the last taking the rounding; part_month is the month it's for.
-  DROP VIEW IF EXISTS pay_parts;
-  CREATE VIEW pay_parts AS
-  WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n < 119)
-  SELECT x.*, seq.n + 1 AS part,
-    substr(date(x.part_from || '-01', '+' || seq.n || ' months'), 1, 7) AS part_month,
-    CASE WHEN x.parts = 1 THEN x.pay
-         WHEN seq.n = x.parts - 1 THEN x.pay - ROUND(x.pay / x.parts, 2) * (x.parts - 1)
-         ELSE ROUND(x.pay / x.parts, 2) END AS part_amount,
-    CASE WHEN x.parts = 1 THEN x.paid_on ELSE pp.paid_on END AS part_paid_on,
-    CASE WHEN x.parts = 1 THEN x.paid ELSE COALESCE(pp.paid_amount, 0) END AS part_paid
-  FROM payments x JOIN seq ON seq.n < x.parts
-  LEFT JOIN part_paid pp ON pp.allocation_id = x.id AND pp.seq = seq.n + 1;
-`);
+    CREATE VIEW payments AS
+    SELECT b.*,
+      CASE WHEN b.alloc_part IS NULL OR b.parts <= 1 THEN b.revenue
+           WHEN b.alloc_part >= b.parts THEN b.revenue - ROUND(b.revenue / b.parts, 2) * (b.parts - 1)
+           ELSE ROUND(b.revenue / b.parts, 2) END * b.category_pct * b.weightage AS pay
+    FROM payment_base b;
+
+    CREATE VIEW pay_parts AS
+    WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n < 119)
+    SELECT x.*, COALESCE(x.alloc_part, seq.n + 1) AS part,
+      substr(date(x.part_from || '-01', '+' || (COALESCE(x.alloc_part, seq.n + 1) - 1) || ' months'), 1, 7) AS part_month,
+      CASE WHEN x.alloc_part IS NOT NULL OR x.parts = 1 THEN x.pay
+           WHEN seq.n = x.parts - 1 THEN x.pay - ROUND(x.pay / x.parts, 2) * (x.parts - 1)
+           ELSE ROUND(x.pay / x.parts, 2) END AS part_amount,
+      CASE WHEN x.alloc_part IS NOT NULL OR x.parts = 1 THEN x.paid_on ELSE pp.paid_on END AS part_paid_on,
+      CASE WHEN x.alloc_part IS NOT NULL OR x.parts = 1 THEN x.paid ELSE COALESCE(pp.paid_amount, 0) END AS part_paid
+    FROM payments x JOIN seq ON (x.alloc_part IS NOT NULL AND seq.n = 0) OR (x.alloc_part IS NULL AND seq.n < x.parts)
+    LEFT JOIN part_paid pp ON x.alloc_part IS NULL AND pp.allocation_id = x.id AND pp.seq = seq.n + 1;
+  `);
+}
+
+// Custom payments saved before months had their own weightages: give every month its own copy of
+// each contributor (same weightage), carrying over months already marked paid.
+{
+  const legacy = db.prepare('SELECT id, period_id, category, employee_id, weightage, parts FROM payments WHERE alloc_part IS NULL AND parts > 1').all();
+  if (legacy.length) {
+    const marks = db.prepare('SELECT * FROM part_paid WHERE allocation_id = ?');
+    const insert = db.prepare(`
+      INSERT INTO allocations (period_id, part, category, employee_id, weightage, paid_on, paid_amount, paid_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+    const remove = db.prepare('DELETE FROM allocations WHERE id = ?');
+    db.exec('BEGIN');
+    try {
+      for (const a of legacy) {
+        const paid = new Map(marks.all(a.id).map((m) => [m.seq, m]));
+        for (let k = 1; k <= a.parts; k++) {
+          const m = paid.get(k);
+          insert.run(a.period_id, k, a.category, a.employee_id, a.weightage, m?.paid_on ?? null, m?.paid_amount ?? null, m?.paid_by ?? null);
+        }
+        remove.run(a.id);
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+}
 
 // Users added before roles existed get the new columns. Invited users have an empty
 // password_hash until they open their setup link and choose a password.

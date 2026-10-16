@@ -25,12 +25,13 @@ It works the same way as the workbook:
    on a payment takes a rate (today's European Central Bank rate is offered) and pays that payment in INR.
    Pay in different currencies is never added together: Summary shows one currency at a time, and
    All payments and Employees show a total per currency.
-5. Each payment has a **payment date** (the month it's paid, which can differ from the onboard month)
-   and a **payment type**: **One time** pays the employees' share once, in the payment date month;
-   **Custom** splits it into equal monthly parts from **From** to **To** (From = the payment date, To
-   12 months on by default, for Monthly, Yearly and Three Years alike). Each month's part is marked
-   paid on its own, once the month has arrived; a revenue share's payment type is the default for its
-   payments. Payments that existed before this are one time, so nothing moved.
+5. Each payment has a **payment date** (the month it's paid, which can differ from the onboard month).
+   **Monthly** customers have a payment every month, each with its own amount and weightages. For
+   **Yearly** and **Three Years**, the **payment type** is **One time** (one amount, one set of
+   weightages) or **Custom**: the amount is entered once and split equally over the payout months
+   (From to To), and **each month has its own contributors and weightages** (chosen with month tabs on
+   the payment page). Each month is marked paid on its own once it has arrived. A revenue share's
+   payment type is the default for its payments.
 6. **Summary** shows each employee's pay per month and per year (in the payment date month, or in each
    part's month for Custom). **All payments** is the
    full log, and you can download it as a CSV file.
@@ -161,7 +162,7 @@ periods                  id, customer_id, start_month, amount (customer currency
                          revenue (employees' pool = amount × share_pct × fx_rate, in the pay currency)
                          pay_month (payment date), payout_type (once / custom), pay_from, pay_to
 part_paid                allocation_id, seq, month, paid_on, paid_amount, paid_by (paid marks on custom payments' months)
-allocations              id, period_id, category, employee_id, weightage, paid_on, paid_amount, paid_by
+allocations              id, period_id, part (month of a custom payment, or NULL), category, employee_id, weightage, paid_on, paid_amount, paid_by
 payments (view)          every allocation with pay = revenue × category % × weightage, and the amount paid
 azdo_settings            key, value (Azure DevOps organisation and project)
 azdo_areas               id, path, name, display_name
