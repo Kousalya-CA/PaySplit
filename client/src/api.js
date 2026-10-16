@@ -72,6 +72,8 @@ export const api = {
   allocations: {
     markPaid: (id, paidOn) => request(`/allocations/${id}/paid`, { method: 'POST', body: { paid_on: paidOn } }),
     undoPaid: (id) => request(`/allocations/${id}/paid`, { method: 'DELETE' }),
+    markPart: (id, seq, paidOn) => request(`/allocations/${id}/parts/${seq}/paid`, { method: 'POST', body: { paid_on: paidOn } }),
+    undoPart: (id, seq) => request(`/allocations/${id}/parts/${seq}/paid`, { method: 'DELETE' }),
   },
   deployments: {
     list: () => request('/deployments'),

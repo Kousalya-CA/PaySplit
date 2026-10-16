@@ -244,6 +244,38 @@ for (const [col, type] of [['paid_on', 'TEXT'], ['paid_amount', 'REAL'], ['paid_
   if (!allocationColumns.has(col)) db.exec(`ALTER TABLE allocations ADD COLUMN ${col} ${type}`);
 }
 
+// How a payment's employees' share is paid out. pay_month is the payment date (the month it's paid;
+// NULL = the payment's own month). payout_type 'once' pays it all in pay_month; 'custom' splits it
+// into equal monthly parts from pay_from to pay_to (NULL = pay_month and 12 months on). A share's
+// payout_type is the default for its payments that haven't been saved with one. Payments that
+// already had an amount or contributors are one time, so nothing moves. part_paid holds paid marks on the parts.
+{
+  const periodCols = new Set(db.prepare('PRAGMA table_info(periods)').all().map((c) => c.name));
+  if (!periodCols.has('payout_type')) {
+    db.exec(`
+      ALTER TABLE periods ADD COLUMN pay_month TEXT;
+      ALTER TABLE periods ADD COLUMN payout_type TEXT;
+      ALTER TABLE periods ADD COLUMN pay_from TEXT;
+      ALTER TABLE periods ADD COLUMN pay_to TEXT;
+      UPDATE periods SET payout_type = 'once'
+        WHERE revenue <> 0 OR amount IS NOT NULL OR EXISTS (SELECT 1 FROM allocations a WHERE a.period_id = periods.id);
+    `);
+  }
+  const shareCols = new Set(db.prepare('PRAGMA table_info(shares)').all().map((c) => c.name));
+  if (!shareCols.has('payout_type')) db.exec('ALTER TABLE shares ADD COLUMN payout_type TEXT');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS part_paid (
+      allocation_id INTEGER NOT NULL REFERENCES allocations(id) ON DELETE CASCADE,
+      seq           INTEGER NOT NULL,                -- 1 = first monthly part
+      month         TEXT NOT NULL,                   -- 'YYYY-MM' the part is for
+      paid_on       TEXT NOT NULL,
+      paid_amount   REAL NOT NULL,
+      paid_by       TEXT,
+      PRIMARY KEY (allocation_id, seq)
+    );
+  `);
+}
+
 db.exec(`
   -- Pay is never stored: it is always Revenue x Category % x Weightage %
   -- (the same formula as the Excel workbook), using the share that covers the period.
@@ -277,6 +309,14 @@ db.exec(`
     p.share_pct    AS share_pct,
     p.fx_rate      AS fx_rate,
     c.currency     AS customer_currency,
+    -- payout: the payment date, and the months its share is paid in (one part for one time)
+    COALESCE(p.pay_month, p.start_month) AS pay_month,
+    CASE WHEN COALESCE(p.payout_type, s.payout_type, 'once') = 'custom' THEN 'custom' ELSE 'once' END AS payout_type,
+    CASE WHEN COALESCE(p.payout_type, s.payout_type, 'once') = 'custom'
+         THEN COALESCE(p.pay_from, p.pay_month, p.start_month) ELSE COALESCE(p.pay_month, p.start_month) END AS part_from,
+    CASE WHEN COALESCE(p.payout_type, s.payout_type, 'once') <> 'custom' THEN 1
+         WHEN p.pay_to IS NULL THEN 12
+         ELSE MAX(1, (CAST(substr(p.pay_to, 1, 4) AS INTEGER) * 12 + CAST(substr(p.pay_to, 6, 2) AS INTEGER)) - (CAST(substr(COALESCE(p.pay_from, p.pay_month, p.start_month), 1, 4) AS INTEGER) * 12 + CAST(substr(COALESCE(p.pay_from, p.pay_month, p.start_month), 6, 2) AS INTEGER)) + 1) END AS parts,
     -- pay, paid and revenue (the employees' pool) are in this currency
     CASE WHEN p.fx_rate IS NOT NULL AND c.currency <> 'INR' THEN 'INR' ELSE c.currency END AS currency
   FROM allocations a
@@ -285,6 +325,21 @@ db.exec(`
   JOIN employees e ON e.id = a.employee_id
   JOIN shares    s ON s.customer_id = c.id AND p.start_month >= s.from_month
                   AND (s.to_month IS NULL OR p.start_month <= s.to_month);
+
+  -- One row per monthly part of each contributor's pay (one row for one time). Each part is pay split
+  -- evenly, the last taking the rounding; part_month is the month it's for.
+  DROP VIEW IF EXISTS pay_parts;
+  CREATE VIEW pay_parts AS
+  WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n < 119)
+  SELECT x.*, seq.n + 1 AS part,
+    substr(date(x.part_from || '-01', '+' || seq.n || ' months'), 1, 7) AS part_month,
+    CASE WHEN x.parts = 1 THEN x.pay
+         WHEN seq.n = x.parts - 1 THEN x.pay - ROUND(x.pay / x.parts, 2) * (x.parts - 1)
+         ELSE ROUND(x.pay / x.parts, 2) END AS part_amount,
+    CASE WHEN x.parts = 1 THEN x.paid_on ELSE pp.paid_on END AS part_paid_on,
+    CASE WHEN x.parts = 1 THEN x.paid ELSE COALESCE(pp.paid_amount, 0) END AS part_paid
+  FROM payments x JOIN seq ON seq.n < x.parts
+  LEFT JOIN part_paid pp ON pp.allocation_id = x.id AND pp.seq = seq.n + 1;
 `);
 
 // Users added before roles existed get the new columns. Invited users have an empty

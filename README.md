@@ -22,7 +22,14 @@ It works the same way as the workbook:
    on a payment takes a rate (today's European Central Bank rate is offered) and pays that payment in INR.
    Pay in different currencies is never added together: Summary shows one currency at a time, and
    All payments and Employees show a total per currency.
-5. **Summary** shows each employee's pay per month and per year. **All payments** is the
+5. Each payment has a **payment date** (the month it's paid, which can differ from the onboard month)
+   and a **payment type**: **One time** pays the employees' share once, in the payment date month;
+   **Custom** splits it into equal monthly parts from **From** to **To** (From = the payment date, To
+   12 months on by default, for Monthly, Yearly and Three Years alike). Each month's part is marked
+   paid on its own, once the month has arrived; a revenue share's payment type is the default for its
+   payments. Payments that existed before this are one time, so nothing moved.
+6. **Summary** shows each employee's pay per month and per year (in the payment date month, or in each
+   part's month for Custom). **All payments** is the
    full log, and you can download it as a CSV file.
 
 A yearly customer's pay is counted in the month its year starts, just like the workbook's Monthly Summary.
@@ -145,9 +152,11 @@ users                    id, name, email, role (admin/employee), is_owner, last_
 sessions                 login sessions
 employees                id, employee_code, name, email, active, type
 customers                id, name, onboard_month, frequency, currency, azdo_client
-shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct
+shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct, payout_type
 periods                  id, customer_id, start_month, amount (customer currency), share_pct, fx_rate (to INR, or NULL),
                          revenue (employees' pool = amount × share_pct × fx_rate, in the pay currency)
+                         pay_month (payment date), payout_type (once / custom), pay_from, pay_to
+part_paid                allocation_id, seq, month, paid_on, paid_amount, paid_by (paid marks on custom payments' months)
 allocations              id, period_id, category, employee_id, weightage, paid_on, paid_amount, paid_by
 payments (view)          every allocation with pay = revenue × category % × weightage, and the amount paid
 azdo_settings            key, value (Azure DevOps organisation and project)
@@ -178,6 +187,8 @@ Percentages are stored as fractions (0.7 = 70%).
 | PUT    | /api/periods/:id              | Save revenue and contributors for a period      |
 | POST   | /api/allocations/:id/paid     | Mark one contributor paid `{ paid_on }`          |
 | DELETE | /api/allocations/:id/paid     | Undo a paid mark                                |
+| POST   | /api/allocations/:id/parts/:seq/paid | Mark one month of a custom payment paid `{ paid_on }` |
+| DELETE | /api/allocations/:id/parts/:seq/paid | Undo a month's paid mark                 |
 | POST   | /api/periods/:id/paid         | Mark everyone unpaid in a period paid           |
 | DELETE | /api/periods/:id              | Delete a period                                 |
 | GET    | /api/payments                 | All payment rows                                |

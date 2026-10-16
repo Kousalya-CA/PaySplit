@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { money, moneyIn, currencySymbol, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel, dayLabel } from '../format.js';
+import { money, moneyIn, currencySymbol, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel, dayLabel, addMonths } from '../format.js';
 import { ErrorNote } from '../components/common.jsx';
 
 const CATEGORIES = ['Direct', 'Support', 'Others'];
@@ -11,12 +11,25 @@ const rowsFrom = (allocations) => Object.fromEntries(CATEGORIES.map((cat) => [
   allocations.filter((a) => a.category === cat)
     .map((a) => ({
       key: nextKey++, id: a.id, employee_id: String(a.employee_id), weightage: toPctInput(a.weightage), exact: a.weightage,
-      paid_on: a.paid_on, paid_amount: a.paid_amount,
+      paid_on: a.paid_on, paid_amount: a.paid_amount, locked: a.locked, parts: a.parts,
     })),
 ]));
 
 // Today as YYYY-MM-DD in local time, the default paid date.
 const todayIso = () => new Date().toLocaleDateString('en-CA');
+
+// The payment: its payment date (month it's paid), one time or custom, and for custom the months the
+// employees' share is split over (From = the payment date and 12 months by default).
+const payoutFrom = (p) => {
+  const payMonth = p.pay_month || p.start_month;
+  const from = p.pay_from || payMonth;
+  return { pay_month: payMonth, type: p.payout_type === 'custom' ? 'custom' : 'once', from, to: p.pay_to || addMonths(from, 11) };
+};
+const monthsBetween = (a, b) => {
+  const [y1, m1] = a.split('-').map(Number);
+  const [y2, m2] = b.split('-').map(Number);
+  return (y2 - y1) * 12 + (m2 - m1) + 1;
+};
 
 // Weightage as a fraction: the exact stored value if the row wasn't retyped, otherwise what was typed.
 const fractionOf = (row) => (row.exact != null ? row.exact : parseNum(row.weightage) / 100);
@@ -48,6 +61,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   const canConvert = cur !== 'INR';
   const [rev, setRev] = useState(() => revenueFrom(period));
   const [convert, setConvert] = useState(() => canConvert && period.fx_rate != null);
+  const [payout, setPayout] = useState(() => payoutFrom(period));
   const [today, setToday] = useState(null); // { rate, date } or { error }
   const [rows, setRows] = useState(() => rowsFrom(period.allocations));
   const [dirty, setDirty] = useState(false);
@@ -63,11 +77,15 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     if (dirty) return;
     setRev(revenueFrom(period));
     setConvert(canConvert && period.fx_rate != null);
+    setPayout(payoutFrom(period));
     setRows(rowsFrom(period.allocations));
   }, [period]);
 
-  // Once anyone in this payment is paid, the employees' share is locked (until every paid mark is undone).
-  const anyPaid = period.allocations.some((a) => a.paid_on);
+  // Once anyone in this payment is paid (or has a monthly part paid), the employees' share and the
+  // payment details are locked (until every paid mark is undone).
+  const anyPaid = period.allocations.some((a) => a.locked);
+  // Saved as a custom payment split over more than one month.
+  const splitSaved = period.parts > 1;
   const [busyPaid, setBusyPaid] = useState('');
   const [allDate, setAllDate] = useState(null); // paid date while "Mark all as paid" is open
   const paidAction = async (key, fn, message) => {
@@ -91,9 +109,22 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     if (!window.confirm(`Undo the paid mark for ${name}? Their weightage can then be changed again.`)) return;
     paidAction(`row-${row.id}`, () => api.allocations.undoPaid(row.id), 'Paid mark removed.');
   };
-  const unpaidSaved = period.allocations.filter((a) => !a.paid_on);
+  const undoPart = (row, seq, name) => {
+    if (!window.confirm(`Undo the paid mark on ${name}'s part for this month?`)) return;
+    paidAction(`row-${row.id}`, () => api.allocations.undoPart(row.id, seq), 'Paid mark removed.');
+  };
+  // Mark everyone's part for one month (one request per contributor; the last result is shown).
+  const markMonth = (seq, paidOn, list) => paidAction(`month-${seq}`, async () => {
+    let updated = null;
+    for (const a of list) updated = await api.allocations.markPart(a.id, seq, paidOn);
+    return updated;
+  }, `Marked ${list.length} as paid.`);
+  // What "Mark all as paid" would mark: unpaid contributors, or monthly parts whose month has arrived.
+  const unpaidSaved = splitSaved
+    ? period.allocations.flatMap((a) => (a.parts || []).filter((x) => !x.paid_on && x.month <= todayIso().slice(0, 7)))
+    : period.allocations.filter((a) => !a.paid_on);
   const markAll = async () => {
-    if (await paidAction('all', () => api.periods.markAllPaid(period.id, allDate), `Marked ${unpaidSaved.length} as paid.`)) setAllDate(null);
+    if (await paidAction('all', () => api.periods.markAllPaid(period.id, allDate), `Marked ${unpaidSaved.length}${splitSaved ? ' monthly parts' : ''} as paid.`)) setAllDate(null);
   };
 
   const change = (fn) => { fn(); setDirty(true); setNotice(''); };
@@ -118,6 +149,13 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   const [amountNum, rateNum] = [parseNum(rev.amount), parseNum(rev.rate)];
   const pool = blank ? 0 : round2(amountNum * (converting ? rateNum : 1));
   const revValue = Number.isFinite(pool) ? pool : 0;
+  // Custom payment: how many monthly parts the share is split into, as typed. Changing the payment
+  // date (or switching to custom) starts From there and runs 12 months.
+  const custom = payout.type === 'custom';
+  const rangeOk = custom && payout.from && payout.to && payout.to >= payout.from;
+  const partCount = rangeOk ? monthsBetween(payout.from, payout.to) : 1;
+  const setPayDate = (m) => change(() => setPayout((x) => ({ ...x, pay_month: m, ...(m ? { from: m, to: addMonths(m, 11) } : {}) })));
+  const setType = (t) => change(() => setPayout((x) => ({ ...x, type: t, from: x.pay_month, to: addMonths(x.pay_month, 11) })));
   // The revenue share covering this period. With none, every category gets 0%.
   const share = period.share;
   const categoryPct = share
@@ -145,6 +183,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   const discard = () => {
     setRev(revenueFrom(period));
     setConvert(canConvert && period.fx_rate != null);
+    setPayout(payoutFrom(period));
     setRows(rowsFrom(period.allocations));
     setDirty(false);
     setError('');
@@ -156,6 +195,8 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
       if (!Number.isFinite(amountNum) || amountNum < 0) return setError(`Enter the employees' share in ${cur} as a number, for example 1200.`);
       if (converting && (!Number.isFinite(rateNum) || rateNum <= 0)) return setError(`Enter the ${cur} to INR rate, for example 83.5, or remove the conversion.`);
     }
+    if (!payout.pay_month) return setError('Choose the payment date.');
+    if (custom && !rangeOk) return setError('Choose the From and To months for the custom payment (To on or after From).');
     const allocations = [];
     for (const cat of CATEGORIES) {
       for (const r of rows[cat]) {
@@ -176,6 +217,10 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
             ? { amount: period.amount, share_pct: period.share_pct }
             : { amount: amountNum, share_pct: 1 }),
         fx_rate: converting ? rateNum : null,
+        pay_month: payout.pay_month,
+        payout_type: payout.type,
+        pay_from: custom ? payout.from : null,
+        pay_to: custom ? payout.to : null,
         allocations,
       });
       setDirty(false);
@@ -224,7 +269,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
       {anyPaid && (
         <p className="muted small">
-          🔒 The employees' share is locked because someone in this payment is marked as paid. Undo every paid mark to change it.
+          🔒 The employees' share and payment details are locked because someone in this payment is marked as paid. Undo every paid mark to change them.
         </p>
       )}
       <fieldset className="usd-calc" disabled={anyPaid}>
@@ -265,6 +310,42 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
         </p>
       </fieldset>
 
+      <fieldset className="usd-calc payout" disabled={anyPaid}>
+        <legend>Payment</legend>
+        <div className="row">
+          <label className="month-field">
+            <span>Payment date</span>
+            <input type="month" value={payout.pay_month} required onChange={(e) => setPayDate(e.target.value)} />
+          </label>
+          <label>
+            <span>Payment type</span>
+            <select value={payout.type} onChange={(e) => setType(e.target.value)}>
+              <option value="once">One time</option>
+              <option value="custom">Custom (split over months)</option>
+            </select>
+          </label>
+          {custom && (
+            <>
+              <label className="month-field">
+                <span>From</span>
+                <input type="month" value={payout.from} required onChange={(e) => change(() => setPayout({ ...payout, from: e.target.value }))} />
+              </label>
+              <label className="month-field">
+                <span>To</span>
+                <input type="month" value={payout.to} min={payout.from} required onChange={(e) => change(() => setPayout({ ...payout, to: e.target.value }))} />
+              </label>
+            </>
+          )}
+        </div>
+        <p className="muted small">
+          {!custom
+            ? `Paid once, in ${payout.pay_month ? monthLabel(payout.pay_month) : 'the payment month'}.`
+            : rangeOk
+              ? <>Split into <strong>{partCount} monthly part{partCount === 1 ? '' : 's'}</strong>, {monthLabel(payout.from)} to {monthLabel(payout.to)}{revValue > 0 && <>: about {fmt(revValue / partCount)} a month</>}. Each month is marked paid in the Monthly split below.</>
+              : 'Choose From and To (To on or after From).'}
+        </p>
+      </fieldset>
+
       <div className="categories">
         {CATEGORIES.map((cat) => (
           <CategoryTable
@@ -287,6 +368,11 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
         ))}
       </div>
 
+      {custom && rangeOk && partCount > 1 && (
+        <MonthlySplit fromMonth={payout.from} n={partCount} rows={rows} stats={stats} employees={employees} fmt={fmt}
+          pool={revValue} dirty={dirty} saved={splitSaved} busy={busyPaid} onMarkMonth={markMonth} onUndo={undoPart} />
+      )}
+
       <div className="period-foot">
         <p>
           Allocating <strong>{fmt(totalPaid)}</strong> of {fmt(revValue)}
@@ -306,7 +392,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
           {unpaidSaved.length > 0 && allDate === null && (
             <button className="secondary" disabled={dirty} title={dirty ? 'Save or discard your changes first' : undefined}
               onClick={() => setAllDate(todayIso())}>
-              Mark all as paid
+              {splitSaved ? `Mark ${unpaidSaved.length} due monthly parts paid` : 'Mark all as paid'}
             </button>
           )}
         </div>
@@ -317,7 +403,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
               <input type="date" value={allDate} max={todayIso()} onChange={(e) => setAllDate(e.target.value)} />
             </label>
             <button className="primary" disabled={!allDate || busyPaid === 'all'} onClick={markAll}>
-              {busyPaid === 'all' ? 'Saving…' : `Mark ${unpaidSaved.length} as paid`}
+              {busyPaid === 'all' ? 'Saving…' : `Mark ${unpaidSaved.length}${splitSaved ? ' monthly parts' : ''} as paid`}
             </button>
             <button className="secondary" onClick={() => setAllDate(null)}>Cancel</button>
           </div>
@@ -331,7 +417,7 @@ const paidSum = (period) => period.allocations.reduce((s, a) => s + (a.paid_on ?
 
 function CategoryTable({ category, share, stats, rows, employees, onChange, onAdd, onRemove, onEqual, dirty, busyPaid, onMarkPaid, onUndoPaid, fmt }) {
   const [dateFor, setDateFor] = useState({}); // row key -> paid date while "Mark paid" is open
-  const anyPaidHere = rows.some((r) => r.paid_on);
+  const anyPaidHere = rows.some((r) => r.locked);
   const { pool, sum } = stats;
   const over = sum > 100.01;
   const full = Math.abs(sum - 100) < 0.01;
@@ -357,12 +443,13 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
               const pay = pool * (Number.isFinite(f) ? f : 0);
               const name = employees.find((e) => String(e.id) === r.employee_id)?.name || 'this contributor';
               const paid = Boolean(r.paid_on);
+              const locked = Boolean(r.locked);
               const busy = busyPaid === `row-${r.id}`;
               return (
                 <Fragment key={r.key}>
-                <tr className={paid ? 'alloc-paid' : undefined}>
+                <tr className={locked ? 'alloc-paid' : undefined}>
                   <td>
-                    <select aria-label={`${category} employee`} value={r.employee_id} disabled={paid} onChange={(e) => onChange(r.key, 'employee_id', e.target.value)}>
+                    <select aria-label={`${category} employee`} value={r.employee_id} disabled={locked} onChange={(e) => onChange(r.key, 'employee_id', e.target.value)}>
                       <option value="">Choose…</option>
                       {employees
                         .filter((e) => (e.active || String(e.id) === r.employee_id))
@@ -372,19 +459,24 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
                   </td>
                   <td>
                     <span className="suffix-input small-input">
-                      <input inputMode="decimal" aria-label={`${category} weightage`} value={r.weightage} readOnly={paid}
+                      <input inputMode="decimal" aria-label={`${category} weightage`} value={r.weightage} readOnly={locked}
                         title={paid ? 'Paid: undo the paid mark to change it' : undefined}
                         onChange={(e) => onChange(r.key, 'weightage', e.target.value)} />
                       <span aria-hidden="true">%</span>
                     </span>
                   </td>
                   <td className="num">{fmt(paid ? r.paid_amount : pay)}</td>
-                  <td>{!paid && <button className="remove" onClick={() => onRemove(r.key)} aria-label="Remove contributor">×</button>}</td>
+                  <td>{!locked && <button className="remove" onClick={() => onRemove(r.key)} aria-label="Remove contributor">×</button>}</td>
                 </tr>
                 {/* Paid status sits on its own line under the contributor so the three category columns keep their width. */}
                 <tr className={`alloc-status${paid ? ' alloc-paid' : ''}`}>
                   <td colSpan={4} className="paid-cell">
-                    {paid ? (
+                    {r.parts && r.id ? (
+                      <span className={r.parts.every((x) => x.paid_on) ? 'paid-tag' : 'muted small'}>
+                        {r.parts.every((x) => x.paid_on) ? `✓ All ${r.parts.length} months paid`
+                          : `${r.parts.filter((x) => x.paid_on).length} of ${r.parts.length} months paid · see Monthly split`}
+                      </span>
+                    ) : paid ? (
                       <>
                         <span className="paid-tag">✓ Paid {dayLabel(r.paid_on)}</span>{' '}
                         <button className="link" disabled={busy} onClick={() => onUndoPaid(r, name)}>{busy ? '…' : 'Undo'}</button>
@@ -434,5 +526,106 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
           : `${+sum.toFixed(2)}% assigned. ${fmt(pool - stats.paid)} not assigned.`}
       </p>
     </div>
+  );
+}
+
+// n even parts of an amount (to the paisa/cent), the last part taking the rounding (same as the server).
+const splitEven = (amount, n) => {
+  const each = Math.round((amount / n) * 100) / 100;
+  return Array.from({ length: n }, (_, k) => (k === n - 1 ? Math.round((amount - each * (n - 1)) * 100) / 100 : each));
+};
+
+// A custom payment: the employees' share (entered once) split into monthly parts, each contributor's
+// part per month with its paid mark, and Mark paid per month for everyone (on the date chosen above
+// the table, once the month has arrived).
+function MonthlySplit({ fromMonth, n, rows, stats, employees, fmt, pool, dirty, saved, busy, onMarkMonth, onUndo }) {
+  const months = Array.from({ length: n }, (_, k) => addMonths(fromMonth, k));
+  const [paidOn, setPaidOn] = useState(todayIso());
+  const lines = CATEGORIES.flatMap((cat) => rows[cat].filter((r) => r.employee_id).map((r) => {
+    const f = fractionOf(r);
+    const pay = stats[cat].pool * (Number.isFinite(f) ? f : 0);
+    return {
+      key: r.key, row: r, cat, pay, parts: splitEven(pay, n),
+      name: employees.find((e) => String(e.id) === r.employee_id)?.name || 'Contributor',
+      marks: Object.fromEntries((r.parts || []).map((x) => [x.seq, x])),
+    };
+  }));
+  const blocked = dirty ? 'Save or discard your changes first' : !saved ? 'Save the payment first' : null;
+  const curMonth = todayIso().slice(0, 7);
+
+  return (
+    <section className="monthly-split">
+      <div className="monthly-split-head">
+        <h3>Monthly split</h3>
+        <p className="muted small">
+          The employees' share is entered once and split over {n} months. Each month is 1/{n} of it{dirty ? ' (save to keep these numbers)' : ''}.
+        </p>
+        <label className="paid-on">
+          <span>Paid on</span>
+          <input type="date" value={paidOn} max={todayIso()} onChange={(e) => setPaidOn(e.target.value)} />
+        </label>
+      </div>
+      <div className="table-wrap">
+        <table className="grid split-grid">
+          <thead>
+            <tr>
+              <th scope="col">Month</th>
+              {months.map((m) => <th key={m} scope="col" className="num">{monthLabel(m)}</th>)}
+              <th scope="col" className="num">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="split-sum">
+              <th scope="row">Employees' share</th>
+              {splitEven(pool, n).map((v, k) => <td key={k} className="num">{fmt(v)}</td>)}
+              <td className="num">{fmt(pool)}</td>
+            </tr>
+            {lines.map((l) => (
+              <tr key={l.key}>
+                <th scope="row"><span className="muted small">{l.cat} · </span>{l.name}</th>
+                {l.parts.map((v, k) => {
+                  const mark = l.marks[k + 1];
+                  return (
+                    <td key={k} className="num">
+                      {mark?.paid_on ? (
+                        <>
+                          {fmt(mark.paid_amount)}
+                          <div>
+                            <span className="paid-tag" title={`Paid ${dayLabel(mark.paid_on)}`}>✓</span>{' '}
+                            <button className="link small" disabled={busy !== ''} onClick={() => onUndo(l.row, k + 1, l.name)}>Undo</button>
+                          </div>
+                        </>
+                      ) : fmt(v)}
+                    </td>
+                  );
+                })}
+                <td className="num strong">{fmt(l.pay)}</td>
+              </tr>
+            ))}
+          </tbody>
+          {lines.length > 0 && (
+            <tfoot>
+              <tr>
+                <th scope="row">Mark paid</th>
+                {months.map((m, k) => {
+                  const unpaid = lines.filter((l) => l.row.id && !l.marks[k + 1]?.paid_on).map((l) => l.row);
+                  if (saved && !dirty && !unpaid.length) return <td key={m} className="num"><span className="paid-tag">✓ Paid</span></td>;
+                  if (m > curMonth) return <td key={m} className="num muted small">Due {monthLabel(m)}</td>;
+                  return (
+                    <td key={m} className="num">
+                      <button className="link" disabled={Boolean(blocked) || !paidOn || busy !== '' || !unpaid.length} title={blocked || undefined}
+                        onClick={() => onMarkMonth(k + 1, paidOn, unpaid)}>
+                        {busy === `month-${k + 1}` ? 'Saving…' : `Mark ${unpaid.length} paid`}
+                      </button>
+                    </td>
+                  );
+                })}
+                <td />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </section>
   );
 }

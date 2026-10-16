@@ -19,13 +19,14 @@ function monthsAt(i, onboard, frequency) {
 }
 
 export const newShares = (onboard, frequency) => [
-  { key: nextKey++, name: 'Onboarding', ...monthsAt(0, onboard, frequency), direct: '70', support: '20', others: '10' },
+  { key: nextKey++, name: 'Onboarding', ...monthsAt(0, onboard, frequency), direct: '70', support: '20', others: '10', payout_type: 'once' },
 ];
 
 export const sharesFromCustomer = (customer) => customer.shares.map((s) => ({
   key: nextKey++, name: s.name, from_month: s.from_month, to_month: s.to_month || '',
   payment_month: s.payment_month || s.from_month,
   direct: pctText(s.direct_pct), support: pctText(s.support_pct), others: pctText(s.others_pct),
+  payout_type: s.payout_type || 'once',
 }));
 
 // After the onboard month or frequency changes, lay the shares out again (names and % are kept).
@@ -63,6 +64,7 @@ export const sharesForApi = (shares) => shares.map((s) => ({
   direct_pct: parseNum(s.direct) / 100,
   support_pct: parseNum(s.support) / 100,
   others_pct: parseNum(s.others) / 100,
+  payout_type: s.payout_type === 'custom' ? 'custom' : 'once',
 }));
 
 // 'Oct 2026 to Sep 2027', 'Sep 2026' when a share is a single month, plus ', paid Dec 2026'
@@ -98,7 +100,7 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
     const from = addMonths(last.to_month || last.from_month, 1);
     onChange([...shares, {
       key: nextKey++, name: '', from_month: from, to_month: addMonths(from, span - 1),
-      direct: last.direct, support: last.support, others: last.others,
+      direct: last.direct, support: last.support, others: last.others, payout_type: last.payout_type || 'once',
     }]);
   };
 
@@ -157,6 +159,21 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
                 </label>
               ))}
             </div>
+            <div className="row">
+              <label>
+                <span>Payment type</span>
+                <select value={s.payout_type || 'once'} onChange={(e) => update(s.key, { payout_type: e.target.value })}>
+                  <option value="once">One time</option>
+                  <option value="custom">Custom (split over months)</option>
+                </select>
+              </label>
+            </div>
+            <p className="muted small">
+              {s.payout_type === 'custom'
+                ? 'Each payment\'s employees\' share is split into monthly parts, from the payment date for 12 months by default. The months can be changed on each payment.'
+                : 'Each payment\'s employees\' share is paid once, on its payment date.'}
+              {' '}This is the default for new payments; each payment can still be changed.
+            </p>
             <div className="share-foot">
               <p className={ok ? 'muted small' : 'warn-text small'}>
                 {ok ? 'Adds up to 100%.' : `Adds up to ${+sum.toFixed(4)}%. It needs to be exactly 100%.`}

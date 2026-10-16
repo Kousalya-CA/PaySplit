@@ -403,3 +403,13 @@ a.secondary { display: inline-block; text-decoration: none; }
 .page .prefix-input.wide input { padding-left: 3.4rem; }
 .currency-field { max-width: 22rem; }
 .seg-top { margin-top: 0; }
+/* Custom payment: the employees' share split over months */
+.monthly-split { margin-top: 1.25rem; }
+.monthly-split-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem 1rem; }
+.monthly-split-head h3 { margin: 0; }
+.monthly-split-head p { margin: 0; flex: 1 1 18rem; }
+.monthly-split .paid-on { display: flex; align-items: center; gap: .4rem; }
+.split-grid th[scope="row"] { white-space: nowrap; }
+.split-grid .split-sum th, .split-grid .split-sum td { background: var(--lilac); }
+.split-grid td { white-space: nowrap; }
+.usd-calc.payout legend { font-weight: 600; }

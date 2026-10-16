@@ -87,7 +87,7 @@ export default function CustomerDetail({ id }) {
             {customer.shares.map((s) => (
               <li key={s.id}>
                 <strong>{s.name}</strong> ({shareMonths(s)}): Direct {pct(s.direct_pct)},
-                Support {pct(s.support_pct)}, Others {pct(s.others_pct)}
+                Support {pct(s.support_pct)}, Others {pct(s.others_pct)}{s.payout_type === 'custom' ? '; paid split over months' : ''}
               </li>
             ))}
           </ul>

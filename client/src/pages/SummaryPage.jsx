@@ -140,7 +140,7 @@ export default function SummaryPage({ isAdmin }) {
         </table>
       </div>
       <p className="muted small">
-        A Yearly or Three Years customer's pay is counted in the month it's paid, the same as the Excel workbook.
+        Pay is counted in its payment date's month, or in each month when a payment is split over months (Custom).
         Paid and Pending are counted in the month the pay is for, not the date it was paid.
       </p>
     </section>

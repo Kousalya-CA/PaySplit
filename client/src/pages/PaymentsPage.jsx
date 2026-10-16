@@ -3,7 +3,8 @@ import { api } from '../api.js';
 import { monthLabel, pct, dayLabel, moneyList, CURRENCIES } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 
-// Same as the "All Payments" sheet: one row per employee per category per period.
+// Same as the "All Payments" sheet: one row per employee per category per period (one row per month
+// when a payment is split over months). The first column is the month the pay is for.
 // An Employee login gets only their own rows (the server filters them). Pay is in the payment's
 // currency (INR when the payment was converted). Total revenue isn't shown, only the employees' share.
 export default function PaymentsPage({ isAdmin }) {
@@ -17,7 +18,7 @@ export default function PaymentsPage({ isAdmin }) {
     const list = rows || [];
     const uniq = (f) => [...new Set(list.map(f))].sort();
     return {
-      customers: uniq((r) => r.customer), employees: uniq((r) => r.employee), years: uniq((r) => r.start_month.slice(0, 4)),
+      customers: uniq((r) => r.customer), employees: uniq((r) => r.employee), years: uniq((r) => r.month.slice(0, 4)),
       currencies: CURRENCIES.filter((c) => list.some((r) => r.currency === c)),
     };
   }, [rows]);
@@ -25,7 +26,7 @@ export default function PaymentsPage({ isAdmin }) {
   const visible = (rows || []).filter((r) =>
     (!filters.customer || r.customer === filters.customer) &&
     (!filters.employee || r.employee === filters.employee) &&
-    (!filters.year || r.start_month.startsWith(filters.year)) &&
+    (!filters.year || r.month.startsWith(filters.year)) &&
     (!filters.status || (filters.status === 'paid' ? r.paid_on : !r.paid_on)) &&
     (!filters.currency || r.currency === filters.currency));
   // Totals per currency: [{ currency, amount }]
@@ -36,12 +37,13 @@ export default function PaymentsPage({ isAdmin }) {
   const paidTotals = sumBy('paid');
 
   const exportCsv = () => {
-    const header = ['Customer', 'Period', 'Month', 'Year', 'Category', 'Employee',
-      'Rate to INR', 'Employees\' share', 'Category %', 'Weightage %', 'Pay', 'Pay currency', 'Status', 'Paid on', 'Paid amount'];
+    const header = ['Customer', 'Pay month', 'Month', 'Year', 'Period', 'Payment type', 'Part', 'Parts', 'Category', 'Employee',
+      'Rate to INR', 'Employees\' share', 'Category %', 'Weightage %', 'Pay (this month)', 'Pay currency', 'Contributor pay for the payment', 'Status', 'Paid on', 'Paid amount'];
     const lines = visible.map((r) => [
-      r.customer, monthLabel(r.start_month), Number(r.start_month.slice(5)), Number(r.start_month.slice(0, 4)),
+      r.customer, monthLabel(r.month), Number(r.month.slice(5)), Number(r.month.slice(0, 4)), monthLabel(r.start_month),
+      r.payout_type === 'custom' ? 'Custom' : 'One time', r.part, r.parts,
       r.category, r.employee,
-      r.fx_rate ?? '', r.revenue, +(r.category_pct * 100).toFixed(4), +(r.weightage * 100).toFixed(4), r.pay.toFixed(2), r.currency,
+      r.fx_rate ?? '', r.revenue, +(r.category_pct * 100).toFixed(4), +(r.weightage * 100).toFixed(4), r.pay.toFixed(2), r.currency, r.total_pay.toFixed(2),
       r.paid_on ? 'Paid' : 'Unpaid', r.paid_on || '', r.paid_on ? r.paid.toFixed(2) : '',
     ]);
     const csv = [header, ...lines].map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -126,7 +128,10 @@ export default function PaymentsPage({ isAdmin }) {
               <tbody>
                 {visible.map((r) => (
                   <tr key={r.id}>
-                    <td>{monthLabel(r.start_month)}</td>
+                    <td>
+                      {monthLabel(r.month)}
+                      {r.parts > 1 && <div className="muted small">{r.part} of {r.parts} · {monthLabel(r.start_month)} payment</div>}
+                    </td>
                     <td>{isAdmin ? <a href={`#/customers/${r.customer_id}`}>{r.customer}</a> : r.customer}</td>
                     <td>{r.category}</td>
                     <th scope="row">{r.employee}</th>

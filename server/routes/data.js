@@ -62,8 +62,8 @@ const q = {
   sharesFor: db.prepare('SELECT * FROM shares WHERE customer_id = ? ORDER BY from_month'),
   deleteSharesFor: db.prepare('DELETE FROM shares WHERE customer_id = ?'),
   insertShare: db.prepare(`
-    INSERT INTO shares (customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+    INSERT INTO shares (customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct, payout_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   movePeriod: db.prepare('UPDATE periods SET start_month = ? WHERE id = ?'),
   customerHasData: db.prepare(`
     SELECT EXISTS (
@@ -76,7 +76,9 @@ const q = {
   periodsFor: db.prepare('SELECT * FROM periods WHERE customer_id = ? ORDER BY start_month'),
   period: db.prepare('SELECT * FROM periods WHERE id = ?'),
   insertPeriod: db.prepare('INSERT INTO periods (customer_id, start_month, revenue) VALUES (?, ?, ?)'),
-  updatePeriod: db.prepare('UPDATE periods SET revenue = ?, amount = ?, share_pct = ?, fx_rate = ? WHERE id = ?'),
+  updatePeriod: db.prepare(`
+    UPDATE periods SET revenue = ?, amount = ?, share_pct = ?, fx_rate = ?, pay_month = ?, payout_type = ?, pay_from = ?, pay_to = ?
+    WHERE id = ?`),
   deletePeriod: db.prepare('DELETE FROM periods WHERE id = ?'),
   periodHasData: db.prepare(`
     SELECT p.revenue <> 0 OR EXISTS (SELECT 1 FROM allocations a WHERE a.period_id = p.id) AS has_data
@@ -90,10 +92,34 @@ const q = {
     JOIN employees e ON e.id = a.employee_id
     WHERE p.customer_id = ? ORDER BY a.id`),
   // Paid rows are never replaced when a period is saved.
-  clearAllocations: db.prepare('DELETE FROM allocations WHERE period_id = ? AND paid_on IS NULL'),
-  allocationsForPeriod: db.prepare('SELECT a.*, e.name AS employee FROM allocations a JOIN employees e ON e.id = a.employee_id WHERE a.period_id = ?'),
+  // (Rows with a paid mark, or any monthly part paid, are never replaced.)
+  clearAllocations: db.prepare(`
+    DELETE FROM allocations WHERE period_id = ? AND paid_on IS NULL
+      AND NOT EXISTS (SELECT 1 FROM part_paid pp WHERE pp.allocation_id = allocations.id)`),
+  allocationsForPeriod: db.prepare(`
+    SELECT a.*, e.name AS employee,
+      (a.paid_on IS NOT NULL OR EXISTS (SELECT 1 FROM part_paid pp WHERE pp.allocation_id = a.id)) AS locked
+    FROM allocations a JOIN employees e ON e.id = a.employee_id WHERE a.period_id = ?`),
+  partsPaidForCustomer: db.prepare(`
+    SELECT pp.* FROM part_paid pp JOIN allocations a ON a.id = pp.allocation_id JOIN periods p ON p.id = a.period_id
+    WHERE p.customer_id = ?`),
+  partsOf: db.prepare('SELECT * FROM part_paid WHERE allocation_id = ?'),
+  markPart: db.prepare('INSERT INTO part_paid (allocation_id, seq, month, paid_on, paid_amount, paid_by) VALUES (?, ?, ?, ?, ?, ?)'),
+  unmarkPart: db.prepare('DELETE FROM part_paid WHERE allocation_id = ? AND seq = ?'),
+  // Contributors with a monthly part paid, with their pay and schedule as they work out now.
+  partPaidForCustomer: db.prepare(`
+    SELECT DISTINCT a.id, e.name AS employee, p.start_month, x.pay, x.part_from, x.parts
+    FROM part_paid pp
+    JOIN allocations a ON a.id = pp.allocation_id
+    JOIN periods p ON p.id = a.period_id
+    JOIN employees e ON e.id = a.employee_id
+    LEFT JOIN payments x ON x.id = a.id
+    WHERE p.customer_id = ?`),
+  partRows: db.prepare(`
+    SELECT * FROM pay_parts
+    ORDER BY part_month, customer, CASE category WHEN 'Direct' THEN 1 WHEN 'Support' THEN 2 ELSE 3 END, id, part`),
   allocation: db.prepare(`
-    SELECT a.*, e.name AS employee, p.customer_id, p.start_month, x.pay
+    SELECT a.*, e.name AS employee, p.customer_id, p.start_month, x.pay, x.parts, x.part_from, x.pay_month
     FROM allocations a
     JOIN periods p ON p.id = a.period_id
     JOIN employees e ON e.id = a.employee_id
@@ -116,22 +142,23 @@ const q = {
     SELECT * FROM payments
     ORDER BY start_month, customer,
       CASE category WHEN 'Direct' THEN 1 WHEN 'Support' THEN 2 ELSE 3 END, id`),
-  months: db.prepare('SELECT DISTINCT start_month FROM periods ORDER BY start_month'),
+  months: db.prepare('SELECT start_month FROM periods UNION SELECT part_month FROM pay_parts ORDER BY 1'),
   // Currencies pay is in: from contributors' pay, and from payments with revenue entered.
   currenciesUsed: db.prepare(`
     SELECT currency FROM payments
     UNION SELECT ${PAY_CURRENCY_SQL} FROM periods p JOIN customers c ON c.id = p.customer_id WHERE p.revenue <> 0`),
+  // Pay is counted in the payment date month (one time) or in each monthly part's month (custom).
   payByEmployeeMonth: db.prepare(`
-    SELECT employee_id, start_month, SUM(pay) AS pay, SUM(paid) AS paid FROM payments WHERE currency = ?
-    GROUP BY employee_id, start_month`),
+    SELECT employee_id, part_month AS start_month, SUM(part_amount) AS pay, SUM(part_paid) AS paid FROM pay_parts
+    WHERE currency = ? GROUP BY employee_id, part_month`),
   payByEmployeeCustomerMonth: db.prepare(`
-    SELECT employee_id, customer_id, customer, start_month, SUM(pay) AS pay, SUM(paid) AS paid
-    FROM payments WHERE currency = ? GROUP BY employee_id, customer_id, start_month ORDER BY customer`),
+    SELECT employee_id, customer_id, customer, part_month AS start_month, SUM(part_amount) AS pay, SUM(part_paid) AS paid
+    FROM pay_parts WHERE currency = ? GROUP BY employee_id, customer_id, part_month ORDER BY customer`),
   totals: db.prepare(`
     SELECT (SELECT COALESCE(SUM(p.revenue), 0) FROM periods p JOIN customers c ON c.id = p.customer_id
               WHERE ${PAY_CURRENCY_SQL} = ?1) AS revenue,
            (SELECT COALESCE(SUM(pay), 0) FROM payments WHERE currency = ?1) AS allocated,
-           (SELECT COALESCE(SUM(paid), 0) FROM payments WHERE currency = ?1) AS paid`),
+           (SELECT COALESCE(SUM(part_paid), 0) FROM pay_parts WHERE currency = ?1) AS paid`),
 };
 
 // ---------- validation -------------------------------------------------------
@@ -208,7 +235,7 @@ function parseShares(list, onboard, frequency) {
       if (!MONTH_RE.test(to)) throw new HttpError(400, `${name}: choose the To month.`);
       if (to < from) throw new HttpError(400, `${name}: the To month is before the From month.`);
     }
-    return { name, from_month: from, to_month: to, payment_month: payment, ...parseSplit(s, name) };
+    return { name, from_month: from, to_month: to, payment_month: payment, ...parseSplit(s, name), payout_type: s.payout_type === 'custom' ? 'custom' : 'once' };
   }).sort((a, b) => a.from_month.localeCompare(b.from_month));
 
   for (let i = 1; i < shares.length; i++) {
@@ -281,7 +308,7 @@ function saveShares(customerId, shares, frequency) {
   syncPeriods(customerId, shares, frequency, true, q.sharesFor.all(customerId));
   q.deleteSharesFor.run(customerId);
   for (const s of shares) {
-    q.insertShare.run(customerId, s.name, s.from_month, s.to_month, s.payment_month, s.direct, s.support, s.others);
+    q.insertShare.run(customerId, s.name, s.from_month, s.to_month, s.payment_month, s.direct, s.support, s.others, s.payout_type);
   }
 }
 
@@ -327,13 +354,23 @@ function customerDetail(id) {
   const customer = requireCustomer(id);
   const shares = q.sharesFor.all(id);
   const allocations = q.allocationsForCustomer.all(id);
+  const partMarks = q.partsPaidForCustomer.all(id);
   const periods = q.periodsFor.all(id).map((p) => {
     const share = shareFor(shares, p.start_month);
+    const payout = payoutOf(p, share);
     const pctFor = share
       ? { Direct: share.direct_pct, Support: share.support_pct, Others: share.others_pct }
       : { Direct: 0, Support: 0, Others: 0 };
-    const rows = allocations.filter((a) => a.period_id === p.id)
-      .map((a) => ({ ...a, active: Boolean(a.active), pay: p.revenue * pctFor[a.category] * a.weightage }));
+    const rows = allocations.filter((a) => a.period_id === p.id).map((a) => {
+      const pay = p.revenue * pctFor[a.category] * a.weightage;
+      const marks = partMarks.filter((m) => m.allocation_id === a.id);
+      // Custom payout: the monthly parts, each with its paid mark.
+      const parts = payout.parts > 1 ? partsOf(pay, payout.parts, payout.part_from).map((x) => {
+        const m = marks.find((i) => i.seq === x.seq);
+        return { ...x, paid_on: m?.paid_on ?? null, paid_amount: m?.paid_amount ?? null };
+      }) : null;
+      return { ...a, active: Boolean(a.active), pay, parts, locked: Boolean(a.paid_on) || marks.length > 0 };
+    });
     // Months the payment covers: the month itself for Monthly; for Yearly and Three Years its
     // share's From to To (12 or 36 months if no share covers it). start_month is when it's paid.
     const monthly = customer.frequency === 'Monthly';
@@ -341,7 +378,7 @@ function customerDetail(id) {
     const end_month = monthly ? p.start_month
       : share ? share.to_month : addMonths(p.start_month, FREQUENCIES[customer.frequency].step - 1);
     const currency = p.fx_rate != null && customer.currency !== 'INR' ? 'INR' : customer.currency;
-    return { ...p, currency, cover_from, end_month, share, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
+    return { ...p, ...payout, currency, cover_from, end_month, share, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
   });
   return { ...customer, shares, periods };
 }
@@ -360,9 +397,12 @@ function parsePaidOn(value) {
 }
 
 // Paid amounts never change: after changing a customer's shares or months, every paid row must
-// still work out to the amount paid, in the same month. Otherwise the change is refused (rolled back).
+// still work out to the amount paid, in the same month, and contributors with monthly parts paid must
+// keep the same pay and parts. Otherwise the change is refused (rolled back).
 function paidSnapshot(customerId) {
-  return new Map(q.paidForCustomer.all(customerId).map((r) => [r.id, r.start_month]));
+  const snap = new Map(q.paidForCustomer.all(customerId).map((r) => [r.id, r.start_month]));
+  for (const r of q.partPaidForCustomer.all(customerId)) snap.set(`p${r.id}`, `${r.start_month}|${round2(r.pay)}|${r.part_from}|${r.parts}`);
+  return snap;
 }
 function assertPaidUnchanged(customerId, before) {
   for (const r of q.paidForCustomer.all(customerId)) {
@@ -371,7 +411,41 @@ function assertPaidUnchanged(customerId, before) {
       throw new HttpError(409, `${r.employee}'s pay for ${r.start_month} is marked as paid, so this change would alter a paid amount. Undo the paid mark on that payment first.`);
     }
   }
+  for (const r of q.partPaidForCustomer.all(customerId)) {
+    const now = r.pay == null ? null : `${r.start_month}|${round2(r.pay)}|${r.part_from}|${r.parts}`;
+    if (before.has(`p${r.id}`) && before.get(`p${r.id}`) !== now) {
+      throw new HttpError(409, `${r.employee} has monthly parts marked as paid for ${r.start_month}, so this change would alter their pay. Undo those paid marks first.`);
+    }
+  }
 }
+
+// A payment's payout: its payment date (pay_month), one time or custom, and for custom the months
+// its share is split over (pay_from to pay_to, 12 months from the payment date by default). Payments
+// not saved with a type use their share's. Same rules as the payments view in db.js.
+function payoutOf(p, share) {
+  const payMonth = p.pay_month || p.start_month;
+  const type = (p.payout_type || share?.payout_type || 'once') === 'custom' ? 'custom' : 'once';
+  if (type === 'once') return { pay_month: payMonth, payout_type: type, pay_from: null, pay_to: null, part_from: payMonth, parts: 1 };
+  const from = p.pay_from || payMonth;
+  const to = p.pay_to || addMonths(from, 11);
+  return { pay_month: payMonth, payout_type: type, pay_from: from, pay_to: to, part_from: from, parts: Math.max(1, monthsFrom(from, to)) };
+}
+// Months from a to b, counting both.
+function monthsFrom(a, b) {
+  const [y1, m1] = a.split('-').map(Number);
+  const [y2, m2] = b.split('-').map(Number);
+  return (y2 - y1) * 12 + (m2 - m1) + 1;
+}
+// A contributor's pay split into n monthly parts from a month: even parts to the paisa/cent, the
+// last taking the rounding (same as the pay_parts view).
+function partsOf(pay, n, fromMonth) {
+  const each = round2(pay / n);
+  return Array.from({ length: n }, (_, k) => ({
+    seq: k + 1, month: addMonths(fromMonth, k), amount: k === n - 1 ? round2(pay - each * (n - 1)) : each,
+  }));
+}
+// Parts can't be paid before their month (a day of slack for India vs UTC).
+const thisMonth = () => new Date(Date.now() + 86400000).toISOString().slice(0, 7);
 
 // ---------- who can see what -------------------------------------------------
 const employeeByEmail = db.prepare('SELECT id FROM employees WHERE email = ? COLLATE NOCASE');
@@ -525,7 +599,7 @@ export function registerDataRoutes(router) {
   router.delete('/api/customers/:id', ({ params }) => {
     const customer = requireCustomer(params.id);
     if (paidSnapshot(params.id).size) {
-      throw new HttpError(409, `${customer.name} has pay marked as paid, so it can't be deleted. Undo the paid marks first.`);
+      throw new HttpError(409, `${customer.name} has pay (or monthly parts) marked as paid, so it can't be deleted. Undo the paid marks first.`);
     }
     const { n: deployments } = db.prepare('SELECT COUNT(*) AS n FROM deployments WHERE customer_id = ?').get(params.id);
     if (deployments) {
@@ -575,17 +649,34 @@ export function registerDataRoutes(router) {
     if (usd.rate != null && usd.rate <= 0) throw new HttpError(400, `The ${currency} to INR rate must be more than 0.`);
     const revenue = blank ? 0 : Math.round(usd.total * usd.pct * (usd.rate ?? 1) * 100) / 100;
     const list = Array.isArray(body.allocations) ? body.allocations : [];
+    // Payout: the payment date, and one time or custom (split into monthly parts from pay_from to pay_to).
+    const payMonth = body.pay_month == null || body.pay_month === '' ? period.start_month : String(body.pay_month);
+    if (!MONTH_RE.test(payMonth)) throw new HttpError(400, 'Choose the payment date (month).');
+    const payoutType = body.payout_type === 'custom' ? 'custom' : 'once';
+    let payFrom = null;
+    let payTo = null;
+    if (payoutType === 'custom') {
+      payFrom = body.pay_from ? String(body.pay_from) : payMonth;
+      payTo = body.pay_to ? String(body.pay_to) : addMonths(payFrom, 11);
+      if (!MONTH_RE.test(payFrom) || !MONTH_RE.test(payTo)) throw new HttpError(400, 'Choose the From and To months for the custom payout.');
+      if (payTo < payFrom) throw new HttpError(400, 'The custom payout\'s To month is before its From month.');
+      if (monthsFrom(payFrom, payTo) > 120) throw new HttpError(400, 'Keep the custom payout to 120 months or fewer.');
+    }
     // Once anyone in this payment is marked paid, its revenue is locked and paid rows can't change.
-    const paidRows = q.allocationsForPeriod.all(params.id).filter((a) => a.paid_on);
+    const paidRows = q.allocationsForPeriod.all(params.id).filter((a) => a.locked);
     if (paidRows.length) {
       const same = (x, y) => (x == null && y == null) || (x != null && y != null && Math.abs(x - y) < 1e-6);
       if (!same(revenue, period.revenue) || !same(usd.total, period.amount) || !same(usd.pct, period.share_pct) || !same(usd.rate, period.fx_rate)) {
         throw new HttpError(409, 'Someone in this payment is marked as paid, so its revenue is locked. Undo every paid mark to change it.');
       }
+      const before = payoutOf(period, shareFor(q.sharesFor.all(period.customer_id), period.start_month));
+      if (before.pay_month !== payMonth || before.payout_type !== payoutType || before.pay_from !== payFrom || before.pay_to !== payTo) {
+        throw new HttpError(409, 'Someone in this payment is marked as paid, so its payment date and payout are locked. Undo every paid mark to change them.');
+      }
       for (const p of paidRows) {
         const sent = list.find((a) => a.category === p.category && Number(a.employee_id) === p.employee_id);
         if (!sent || !same(Number(sent.weightage), p.weightage)) {
-          throw new HttpError(409, `${p.employee}'s ${p.category} pay is marked as paid, so it can't be changed or removed. Undo the paid mark first.`);
+          throw new HttpError(409, `${p.employee}'s ${p.category} pay is marked as paid (or has monthly parts paid), so it can't be changed or removed. Undo the paid marks first.`);
         }
       }
     }
@@ -612,7 +703,7 @@ export function registerDataRoutes(router) {
     }
 
     transaction(() => {
-      q.updatePeriod.run(revenue, usd.total, usd.pct, usd.rate, params.id);
+      q.updatePeriod.run(revenue, usd.total, usd.pct, usd.rate, payMonth, payoutType, payFrom, payTo, params.id);
       q.clearAllocations.run(params.id);
       for (const r of rows) {
         if (paidRows.some((p) => p.category === r.category && p.employee_id === r.employee_id)) continue;
@@ -634,6 +725,7 @@ export function registerDataRoutes(router) {
     const a = q.allocation.get(params.id);
     if (!a) throw new HttpError(404, 'That contributor wasn\'t found. Reload the page.');
     if (a.paid_on) throw new HttpError(409, `${a.employee}'s pay is already marked as paid.`);
+    if ((a.parts || 1) > 1) throw new HttpError(400, `${a.employee}'s pay is split into ${a.parts} monthly parts. Mark each month as paid.`);
     markOne(a, parsePaidOn(body.paid_on), user);
     return customerDetail(a.customer_id);
   }, admin);
@@ -645,22 +737,62 @@ export function registerDataRoutes(router) {
     return customerDetail(a.customer_id);
   }, admin);
 
-  // Mark everyone in a payment who isn't paid yet as paid on a date.
+  // Custom payout: mark one monthly part as paid (only once its month has arrived), or undo it.
+  const markPart = (a, seq, paidOn, user) => {
+    if (a.pay == null) throw new HttpError(400, `No revenue share covers ${a.start_month}, so ${a.employee}'s pay can't be marked as paid.`);
+    const part = partsOf(a.pay, a.parts || 1, a.part_from).find((x) => x.seq === seq);
+    if (!part) throw new HttpError(404, 'That month wasn\'t found. Reload the page.');
+    if (part.month > thisMonth()) throw new HttpError(400, `${a.employee}'s part for ${monthLabel(part.month)} can't be marked as paid before then.`);
+    if (q.partsOf.all(a.id).some((m) => m.seq === seq)) return false;
+    q.markPart.run(a.id, seq, part.month, paidOn, part.amount, user?.email || null);
+    return true;
+  };
+  router.post('/api/allocations/:id/parts/:seq/paid', ({ params, body, user }) => {
+    const a = q.allocation.get(params.id);
+    if (!a) throw new HttpError(404, 'That contributor wasn\'t found. Reload the page.');
+    if (!markPart(a, Number(params.seq), parsePaidOn(body.paid_on), user)) throw new HttpError(409, 'That month is already marked as paid.');
+    return customerDetail(a.customer_id);
+  }, admin);
+  router.delete('/api/allocations/:id/parts/:seq/paid', ({ params }) => {
+    const a = q.allocation.get(params.id);
+    if (!a) throw new HttpError(404, 'That contributor wasn\'t found. Reload the page.');
+    q.unmarkPart.run(a.id, Number(params.seq));
+    return customerDetail(a.customer_id);
+  }, admin);
+
+  // Mark everyone in a payment who isn't paid yet as paid on a date. With a custom payout: every
+  // monthly part whose month has arrived and isn't paid yet.
   router.post('/api/periods/:id/paid', ({ params, body, user }) => {
     const period = q.period.get(params.id);
     if (!period) throw new HttpError(404, 'Period not found.');
     const paidOn = parsePaidOn(body.paid_on);
-    const unpaid = q.allocationsForPeriod.all(params.id).filter((a) => !a.paid_on);
-    if (!unpaid.length) throw new HttpError(400, 'Everyone in this payment is already marked as paid.');
-    transaction(() => { for (const a of unpaid) markOne(q.allocation.get(a.id), paidOn, user); });
+    let marked = 0;
+    transaction(() => {
+      for (const row of q.allocationsForPeriod.all(params.id)) {
+        const a = q.allocation.get(row.id);
+        if ((a.parts || 1) > 1) {
+          const paid = new Set(q.partsOf.all(a.id).map((m) => m.seq));
+          for (const part of partsOf(a.pay ?? 0, a.parts, a.part_from)) {
+            if (!paid.has(part.seq) && part.month <= thisMonth() && markPart(a, part.seq, paidOn, user)) marked += 1;
+          }
+        } else if (!a.paid_on && markOne(a, paidOn, user)) marked += 1;
+      }
+      if (!marked) throw new HttpError(400, 'Nothing to mark: everyone is paid, or the remaining months haven\'t arrived yet.');
+    });
     return customerDetail(period.customer_id);
   }, admin);
 
   // Consolidated log: the "All Payments" sheet
+  // One row per monthly part (one row for one-time pay): pay and paid are the part's, month is the
+  // month it's for, total_pay is the contributor's whole pay for the payment.
   router.get('/api/payments', ({ user }) => {
-    if (isAdmin(user)) return q.payments.all();
-    const mine = myEmployeeId(user);
-    return q.payments.all().filter((r) => r.employee_id === mine);
+    const mine = isAdmin(user) ? null : myEmployeeId(user);
+    return q.partRows.all()
+      .filter((r) => isAdmin(user) || r.employee_id === mine)
+      .map(({ part_amount, part_paid, part_paid_on, ...r }) => ({
+        ...r, allocation_id: r.id, id: `${r.id}-${r.part}`, month: r.part_month,
+        total_pay: r.pay, pay: part_amount, paid: part_paid, paid_on: part_paid_on,
+      }));
   });
 
   // The "Monthly Summary" sheet: pay per employee per month, plus yearly totals.
