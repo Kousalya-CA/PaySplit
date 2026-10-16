@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, pct, dayLabel, moneyList, CURRENCIES } from '../format.js';
+import { monthLabel, dayLabel, moneyList, CURRENCIES } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 import RevenueShares, { newShares, relayoutShares, sharesForApi } from './RevenueShares.jsx';
@@ -40,8 +40,6 @@ export default function CustomersPage() {
                 <th scope="col">Onboarded</th>
                 <th scope="col">Payment</th>
                 <th scope="col">Currency</th>
-                <th scope="col">Onboarding share (Direct / Support / Others)</th>
-                <th scope="col" className="num">Revenue</th>
                 <th scope="col" className="num">Allocated</th>
                 <th scope="col">Deployed</th>
               </tr>
@@ -53,11 +51,6 @@ export default function CustomersPage() {
                   <td>{monthLabel(c.onboard_month)}</td>
                   <td>{c.frequency}</td>
                   <td>{c.currency}</td>
-                  <td>
-                    {c.shares[0] && `${pct(c.shares[0].direct_pct)} / ${pct(c.shares[0].support_pct)} / ${pct(c.shares[0].others_pct)}`}
-                    {c.shares.length > 1 && <span className="muted small"> +{c.shares.length - 1} more</span>}
-                  </td>
-                  <td><Money value={c.total_revenue} currency={c.currency} /></td>
                   <td className="num">{moneyList(c.allocated) || <Money value={0} />}</td>
                   <td><DeployedCell customer={c} deployments={deployments} /></td>
                 </tr>
