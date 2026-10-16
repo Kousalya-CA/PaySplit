@@ -174,7 +174,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
   };
   const changeOnboard = (month) => {
     setOnboard(month);
-    if (month) setShares(moveOnboarding(shares, onboard || month, month, frequency));
+    if (month) setShares(moveOnboarding(shares, onboard || month, month));
   };
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -223,7 +223,7 @@ function EditCustomer({ customer, onCancel, onSaved, onDelete }) {
       <p className="muted small">
         Changing a revenue share recalculates pay for the periods it covers. Its payments appear
         under Share types; payments no share covers any more are removed (unless revenue or a split
-        has been entered). Changing the onboard month moves the Onboarding share with it.
+        has been entered). The Onboarding share's payment date can't be before the onboard month.
         The payment frequency can only be changed before any revenue or split is entered.
       </p>
       <div className="actions">

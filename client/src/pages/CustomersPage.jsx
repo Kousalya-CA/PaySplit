@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { monthLabel, dayLabel, moneyList, CURRENCIES } from '../format.js';
 import { navigate } from '../useHashRoute.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
-import RevenueShares, { newShares, relayoutShares, sharesForApi } from './RevenueShares.jsx';
+import RevenueShares, { newShares, relayoutShares, shiftShares, sharesForApi } from './RevenueShares.jsx';
 import { latestDeployments, serviceText } from './Deployments.jsx';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
@@ -80,9 +80,9 @@ function DeployedCell({ customer, deployments }) {
 }
 
 const FREQUENCY_OPTIONS = [
-  ['Monthly', 'Enter revenue and the split each month. PaySplit creates 12 months from the onboard month.'],
-  ['Yearly', 'Enter the annual revenue once. The split holds for 12 months from the onboard month.'],
-  ['Three Years', 'A 36-month contract with 3 yearly periods: Year 1, Year 2, Year 3. Each year has its own revenue and split.'],
+  ['Monthly', 'A payment every month from the payment date (12 months by default), each with its own amount and split.'],
+  ['Yearly', 'One payment a year from the payment date.'],
+  ['Three Years', 'A 36-month contract with a yearly payment from the payment date: Year 1, Year 2, Year 3.'],
 ];
 
 // The currency the customer is billed in. Revenue is entered in it, and pay is in it unless a
@@ -119,13 +119,13 @@ export function FrequencyChoice({ value, onChange }) {
 function NewCustomerForm({ onCancel }) {
   const [form, setForm] = useState({ name: '', onboard_month: thisMonth(), frequency: 'Monthly', currency: 'INR' });
   const [shares, setShares] = useState(() => newShares(form.onboard_month, form.frequency));
-  // Moving the onboard month or changing the frequency lays the shares out again from the onboard month.
+  // Moving the onboard month moves the shares with it; changing the frequency lays them out again.
   const changeForm = (patch) => {
     const next = { ...form, ...patch };
     setForm(next);
-    if (next.onboard_month && (next.onboard_month !== form.onboard_month || next.frequency !== form.frequency)) {
-      setShares(relayoutShares(shares, next.onboard_month, next.frequency));
-    }
+    if (!next.onboard_month) return;
+    if (next.frequency !== form.frequency) setShares(relayoutShares(shares, next.onboard_month, next.frequency));
+    else if (form.onboard_month && next.onboard_month !== form.onboard_month) setShares(shiftShares(shares, form.onboard_month, next.onboard_month));
   };
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);

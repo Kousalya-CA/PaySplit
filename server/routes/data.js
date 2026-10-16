@@ -62,8 +62,8 @@ const q = {
   sharesFor: db.prepare('SELECT * FROM shares WHERE customer_id = ? ORDER BY from_month'),
   deleteSharesFor: db.prepare('DELETE FROM shares WHERE customer_id = ?'),
   insertShare: db.prepare(`
-    INSERT INTO shares (customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct, payout_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    INSERT INTO shares (customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct, payout_type, pay_from, pay_to)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   movePeriod: db.prepare('UPDATE periods SET start_month = ? WHERE id = ?'),
   customerHasData: db.prepare(`
     SELECT EXISTS (
@@ -208,34 +208,35 @@ function parseSplit(src, name) {
   return pcts;
 }
 
-// Revenue shares. The first is always "Onboarding" and starts in the onboard month: for Monthly
-// it runs to a To month you choose; for Yearly and Three Years it covers the first 12 or 36 months
-// and is paid once, in a payment month you choose inside them. Every share added after it
-// (Renewal, ...) has From and To months. The customer's periods are the payments inside its
-// shares, so shares can't overlap.
+// Revenue shares. Each starts on its payment date (the month billing starts, which isn't the
+// onboard month) and bills to a To month: every month for Monthly, once a year (from the payment
+// date) for Yearly and Three Years. The first is always "Onboarding". A share's payment type is the
+// default for its payments: one time, or custom with payout months (Payout From/To, for its first
+// payment; later payments move along). The customer's periods are the payments inside its shares, so
+// shares can't overlap.
 function parseShares(list, onboard, frequency) {
   if (!Array.isArray(list) || list.length === 0) throw new HttpError(400, 'Add at least one revenue share.');
-  const oneTimeOnboarding = frequency !== 'Monthly';
   const shares = list.map((s, i) => {
     const name = i === 0 ? 'Onboarding' : String(s.name ?? '').trim();
     if (!name) throw new HttpError(400, `Enter a name for revenue share ${i + 1}.`);
-    const from = i === 0 ? onboard : String(s.from_month ?? '');
-    if (!MONTH_RE.test(from)) throw new HttpError(400, `${name}: choose the From month.`);
-    if (from < onboard) throw new HttpError(400, `${name} starts before the onboard month (${monthLabel(onboard)}).`);
-    let to;
-    let payment = null;
-    if (i === 0 && oneTimeOnboarding) {
-      to = addMonths(from, FREQUENCIES[frequency].step - 1);
-      payment = s.payment_month ? String(s.payment_month) : from;
-      if (!MONTH_RE.test(payment) || payment < from || payment > to) {
-        throw new HttpError(400, `Onboarding: choose a payment month from ${monthLabel(from)} to ${monthLabel(to)}.`);
-      }
-    } else {
-      to = String(s.to_month ?? '');
-      if (!MONTH_RE.test(to)) throw new HttpError(400, `${name}: choose the To month.`);
-      if (to < from) throw new HttpError(400, `${name}: the To month is before the From month.`);
+    const from = String(s.from_month ?? (i === 0 ? onboard : ''));
+    if (!MONTH_RE.test(from)) throw new HttpError(400, `${name}: choose the payment date.`);
+    if (from < onboard) throw new HttpError(400, `${name}'s payment date is before the onboard month (${monthLabel(onboard)}).`);
+    const to = String(s.to_month ?? '');
+    if (!MONTH_RE.test(to)) throw new HttpError(400, `${name}: choose the billing To month.`);
+    if (to < from) throw new HttpError(400, `${name}: the billing To month is before the payment date.`);
+    const custom = s.payout_type === 'custom';
+    let payFrom = null;
+    let payTo = null;
+    if (custom) {
+      payFrom = s.pay_from ? String(s.pay_from) : from;
+      payTo = s.pay_to ? String(s.pay_to) : addMonths(payFrom, 11);
+      if (!MONTH_RE.test(payFrom) || !MONTH_RE.test(payTo)) throw new HttpError(400, `${name}: choose the payout From and To months.`);
+      if (payTo < payFrom) throw new HttpError(400, `${name}: the payout To month is before its From month.`);
+      if (monthsFrom(payFrom, payTo) > 120) throw new HttpError(400, `${name}: keep the payout to 120 months or fewer.`);
     }
-    return { name, from_month: from, to_month: to, payment_month: payment, ...parseSplit(s, name), payout_type: s.payout_type === 'custom' ? 'custom' : 'once' };
+    return { name, from_month: from, to_month: to, payment_month: null, ...parseSplit(s, name),
+      payout_type: custom ? 'custom' : 'once', pay_from: payFrom, pay_to: payTo };
   }).sort((a, b) => a.from_month.localeCompare(b.from_month));
 
   for (let i = 1; i < shares.length; i++) {
@@ -258,17 +259,12 @@ function paymentMonths(share, frequency) {
     for (let m = share.from_month; m <= share.to_month; m = addMonths(m, 1)) months.push(m);
     return months;
   }
-  if (frequency === 'Three Years') {
-    // Create 3 yearly periods: Year 1, Year 2, Year 3
-    const baseMonth = share.payment_month || share.from_month;
-    return [
-      baseMonth,
-      addMonths(baseMonth, 12),
-      addMonths(baseMonth, 24),
-    ];
-  }
-  // Yearly: one payment
-  return [share.payment_month || share.from_month];
+  // Yearly and Three Years: a payment every 12 months from the payment date while inside the share
+  // (at least one). Shares saved before payment dates keep their payment_month as the first payment.
+  const base = share.payment_month || share.from_month;
+  const months = [base];
+  for (let m = addMonths(base, 12); share.to_month && m <= share.to_month; m = addMonths(m, 12)) months.push(m);
+  return months;
 }
 
 // Make a customer's periods match its shares. For Yearly and Three Years a share has one payment,
@@ -308,7 +304,7 @@ function saveShares(customerId, shares, frequency) {
   syncPeriods(customerId, shares, frequency, true, q.sharesFor.all(customerId));
   q.deleteSharesFor.run(customerId);
   for (const s of shares) {
-    q.insertShare.run(customerId, s.name, s.from_month, s.to_month, s.payment_month, s.direct, s.support, s.others, s.payout_type);
+    q.insertShare.run(customerId, s.name, s.from_month, s.to_month, s.payment_month, s.direct, s.support, s.others, s.payout_type, s.pay_from, s.pay_to);
   }
 }
 
@@ -371,12 +367,12 @@ function customerDetail(id) {
       }) : null;
       return { ...a, active: Boolean(a.active), pay, parts, locked: Boolean(a.paid_on) || marks.length > 0 };
     });
-    // Months the payment covers: the month itself for Monthly; for Yearly and Three Years its
-    // share's From to To (12 or 36 months if no share covers it). start_month is when it's paid.
+    // Months the payment covers: the month itself for Monthly; for Yearly and Three Years the year
+    // from its payment month (inside its share). start_month is when it's paid.
     const monthly = customer.frequency === 'Monthly';
-    const cover_from = !monthly && share ? share.from_month : p.start_month;
-    const end_month = monthly ? p.start_month
-      : share ? share.to_month : addMonths(p.start_month, FREQUENCIES[customer.frequency].step - 1);
+    const cover_from = p.start_month;
+    let end_month = monthly ? p.start_month : addMonths(p.start_month, 11);
+    if (!monthly && share?.to_month && end_month > share.to_month) end_month = share.to_month;
     const currency = p.fx_rate != null && customer.currency !== 'INR' ? 'INR' : customer.currency;
     return { ...p, ...payout, currency, cover_from, end_month, share, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
   });
@@ -426,8 +422,12 @@ function payoutOf(p, share) {
   const payMonth = p.pay_month || p.start_month;
   const type = (p.payout_type || share?.payout_type || 'once') === 'custom' ? 'custom' : 'once';
   if (type === 'once') return { pay_month: payMonth, payout_type: type, pay_from: null, pay_to: null, part_from: payMonth, parts: 1 };
-  const from = p.pay_from || payMonth;
-  const to = p.pay_to || addMonths(from, 11);
+  // The share's payout months are for its first payment; later payments move along by as many months.
+  const k = share ? monthsFrom(share.payment_month || share.from_month, p.start_month) - 1 : 0;
+  const shareFrom = share?.pay_from ? addMonths(share.pay_from, k) : null;
+  const shareTo = share?.pay_to ? addMonths(share.pay_to, k) : null;
+  const from = p.pay_from || shareFrom || payMonth;
+  const to = p.pay_to || shareTo || addMonths(from, 11);
   return { pay_month: payMonth, payout_type: type, pay_from: from, pay_to: to, part_from: from, parts: Math.max(1, monthsFrom(from, to)) };
 }
 // Months from a to b, counting both.

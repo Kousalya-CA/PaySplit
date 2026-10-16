@@ -13,8 +13,11 @@ It works the same way as the workbook:
 
 1. Each **customer** has a **currency** (INR, USD, EUR, GBP, AUD, SGD or AED), an onboard month, a payment frequency and a revenue split
    between **Direct**, **Support** and **Others**, which must add up to 100% (for example 70 / 20 / 10).
-2. A **Yearly** customer gets one period, and its split holds for 12 months. A **Monthly**
-   customer gets 12 monthly periods, and the split can change every month.
+2. Each revenue share is filled in top to bottom: (1) the **payment date**, when billing starts (the
+   onboard month is not the billing date; it can't be before it); (2) **billing From** (= the payment
+   date) and **To**, 12 months on by default (36 for Three Years): Monthly bills every month, Yearly
+   and Three Years once a year from the payment date; (3) the **payment type**, One time or Custom
+   with **Payout From/To** (for the first payment; later payments move along); (4) Direct / Support / Others.
 3. In each period you enter the **revenue** in the customer's currency and the **share for employees**
    (10% by default), and add **contributors** to each category, each with a **weightage %**.
 4. **Pool = Revenue × Share %**, and **Pay = Pool × Category % × Weightage %.** Pay is always calculated
@@ -152,7 +155,8 @@ users                    id, name, email, role (admin/employee), is_owner, last_
 sessions                 login sessions
 employees                id, employee_code, name, email, active, type
 customers                id, name, onboard_month, frequency, currency, azdo_client
-shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct, payout_type
+shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct, payout_type,
+                         pay_from, pay_to (custom payout months for the first payment)
 periods                  id, customer_id, start_month, amount (customer currency), share_pct, fx_rate (to INR, or NULL),
                          revenue (employees' pool = amount × share_pct × fx_rate, in the pay currency)
                          pay_month (payment date), payout_type (once / custom), pay_from, pay_to
