@@ -95,8 +95,8 @@ export function CurrencyField({ value, onChange, disabled }) {
         {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
       </select>
       <small className="muted">
-        {disabled ? 'Revenue is already entered in this currency, so it can\'t change.'
-          : 'Revenue is entered in this currency. Pay stays in it unless a payment is converted to INR.'}
+        {disabled ? 'Amounts are already entered in this currency, so it can\'t change.'
+          : 'The employees\' share is entered in this currency. Pay stays in it unless a payment is converted to INR.'}
       </small>
     </label>
   );

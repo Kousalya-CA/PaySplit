@@ -21,14 +21,15 @@ const todayIso = () => new Date().toLocaleDateString('en-CA');
 // Weightage as a fraction: the exact stored value if the row wasn't retyped, otherwise what was typed.
 const fractionOf = (row) => (row.exact != null ? row.exact : parseNum(row.weightage) / 100);
 
-// Revenue is entered in the customer's currency; share % of it (10% by default) is the employees'
-// pool. For a customer not in INR the pool can be converted to INR with a rate.
+// Only the employees' share is entered (in the customer's currency), not the total revenue. For a
+// customer not in INR it can be converted to INR with a rate. Payments saved earlier as revenue x
+// share % show that share (amount x share_pct).
+const round2 = (n) => Math.round(n * 100) / 100;
+const savedShare = (p) => (p.amount != null ? round2(p.amount * (p.share_pct ?? 1)) : null);
 const revenueFrom = (p) => ({
-  amount: p.amount != null ? String(p.amount) : '',
-  pct: p.share_pct != null ? toPctInput(p.share_pct) : '10',
+  amount: savedShare(p) != null ? String(savedShare(p)) : '',
   rate: p.fx_rate != null ? String(p.fx_rate) : '',
 });
-const round2 = (n) => Math.round(n * 100) / 100;
 
 // Today's rate from a currency to INR, fetched once per page load and shared by every period.
 const ratePromises = new Map();
@@ -39,8 +40,8 @@ const todaysRate = (currency) => {
   return ratePromises.get(currency);
 };
 
-// Edits one period: revenue plus the contributors in Direct, Support and Others.
-// Pay = Revenue x Category % x Weightage %, recalculated as you type.
+// Edits one period: the employees' share plus the contributors in Direct, Support and Others.
+// Pay = Employees' share x Category % x Weightage %, recalculated as you type.
 export default function PeriodEditor({ customer, period, prev, employees, onSaved, onDirtyChange }) {
   const label = periodLabel(period);
   const cur = customer.currency;
@@ -65,7 +66,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     setRows(rowsFrom(period.allocations));
   }, [period]);
 
-  // Once anyone in this payment is paid, the revenue is locked (until every paid mark is undone).
+  // Once anyone in this payment is paid, the employees' share is locked (until every paid mark is undone).
   const anyPaid = period.allocations.some((a) => a.paid_on);
   const [busyPaid, setBusyPaid] = useState('');
   const [allDate, setAllDate] = useState(null); // paid date while "Mark all as paid" is open
@@ -109,13 +110,13 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   const startConvert = () => change(() => setConvert(true));
   const stopConvert = () => change(() => { setConvert(false); setRev((r) => ({ ...r, rate: '' })); });
 
-  // The employees' pool: amount x share % (x rate when converting), in the pay currency.
+  // The employees' pool: the share entered (x rate when converting), in the pay currency.
   const converting = canConvert && convert;
   const payCur = converting ? 'INR' : cur;
   const fmt = (n) => money(n, payCur);
   const blank = rev.amount.trim() === '';
-  const [amountNum, pctNum, rateNum] = [parseNum(rev.amount), parseNum(rev.pct), parseNum(rev.rate)];
-  const pool = blank ? 0 : round2(amountNum * (pctNum / 100) * (converting ? rateNum : 1));
+  const [amountNum, rateNum] = [parseNum(rev.amount), parseNum(rev.rate)];
+  const pool = blank ? 0 : round2(amountNum * (converting ? rateNum : 1));
   const revValue = Number.isFinite(pool) ? pool : 0;
   // The revenue share covering this period. With none, every category gets 0%.
   const share = period.share;
@@ -152,8 +153,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   const save = async () => {
     setError('');
     if (!blank) {
-      if (!Number.isFinite(amountNum) || amountNum < 0) return setError(`Enter the revenue in ${cur} as a number, for example 12000.`);
-      if (!Number.isFinite(pctNum) || pctNum < 0 || pctNum > 100) return setError('The share for employees must be between 0 and 100%.');
+      if (!Number.isFinite(amountNum) || amountNum < 0) return setError(`Enter the employees' share in ${cur} as a number, for example 1200.`);
       if (converting && (!Number.isFinite(rateNum) || rateNum <= 0)) return setError(`Enter the ${cur} to INR rate, for example 83.5, or remove the conversion.`);
     }
     const allocations = [];
@@ -169,8 +169,12 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     setSaving(true);
     try {
       const updated = await api.periods.save(period.id, {
-        amount: blank ? null : amountNum,
-        share_pct: blank ? null : pctNum / 100,
+        // An unchanged share keeps how it was saved (older payments: revenue x share %), so the
+        // paid lock sees no change; a new or changed share is saved as the share itself.
+        ...(blank ? { amount: null, share_pct: null }
+          : savedShare(period) != null && Math.abs(savedShare(period) - amountNum) < 0.005
+            ? { amount: period.amount, share_pct: period.share_pct }
+            : { amount: amountNum, share_pct: 1 }),
         fx_rate: converting ? rateNum : null,
         allocations,
       });
@@ -187,10 +191,10 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
   const totalPaid = CATEGORIES.reduce((s, c) => s + stats[c].paid, 0);
   const wording = customer.frequency === 'Monthly'
-    ? { note: 'This month\'s split. It can be different every month.', revenue: `Revenue for ${monthLabel(period.start_month)}` }
+    ? { note: 'This month\'s split. It can be different every month.', revenue: `Employees' share for ${monthLabel(period.start_month)}` }
     : {
       note: `One payment and one split for ${label}. ${paidIn(period) || `Paid in ${monthLabel(period.start_month)}`}.`,
-      revenue: 'Revenue for this payment',
+      revenue: 'Employees\' share for this payment',
     };
 
   return (
@@ -204,7 +208,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
           ) : (
             <p className="warn-text small">
               No revenue share covers {label}, so pay is 0. Add a share type for it in Edit customer,
-              or clear its revenue and split so it's removed the next time the shares are saved.
+              or clear its amount and split so it's removed the next time the shares are saved.
             </p>
           )}
         </div>
@@ -220,19 +224,12 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
       {anyPaid && (
         <p className="muted small">
-          🔒 Revenue is locked because someone in this payment is marked as paid. Undo every paid mark to change it.
+          🔒 The employees' share is locked because someone in this payment is marked as paid. Undo every paid mark to change it.
         </p>
       )}
       <fieldset className="usd-calc" disabled={anyPaid}>
         <legend className="sr-only">Employees' share</legend>
         <div className="row">
-          <label>
-            <span>Share for employees</span>
-            <span className="suffix-input">
-              <input inputMode="decimal" value={rev.pct} onChange={(e) => change(() => setRev({ ...rev, pct: e.target.value }))} />
-              <span aria-hidden="true">%</span>
-            </span>
-          </label>
           {converting && (
             <label>
               <span>1 {cur} in INR</span>
@@ -244,10 +241,12 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
           )}
         </div>
         <p className="muted small">
-          {blank ? `Enter the revenue in ${cur}. ${rev.pct || 0}% of it is shared between the employees below. `
+          {blank ? `Enter the amount to share between the employees below, in ${cur}. `
             : Number.isFinite(pool)
-              ? <>{moneyIn(amountNum, cur)} × {rev.pct}%{converting && <> × ₹{rev.rate}</>} = <strong>{fmt(pool)}</strong> for employees{converting ? ', paid in INR' : `, paid in ${cur}`}. </>
-              : 'Check the numbers above. '}
+              ? converting
+                ? <>{moneyIn(amountNum, cur)} × ₹{rev.rate} = <strong>{fmt(pool)}</strong> for employees, paid in INR. </>
+                : <><strong>{fmt(pool)}</strong> for employees, paid in {cur}. </>
+              : 'Check the number above. '}
           {canConvert && !converting && <button type="button" className="link" onClick={startConvert}>Convert to INR</button>}
           {converting && (
             <>
@@ -342,7 +341,7 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
     <div className={`category cat-${category.toLowerCase()}`}>
       <div className="category-head">
         <h3>{category}</h3>
-        <p className="muted small">{pct(share)} of revenue: {fmt(pool)}</p>
+        <p className="muted small">{pct(share)} of the employees' share: {fmt(pool)}</p>
       </div>
 
       {rows.length === 0 ? (

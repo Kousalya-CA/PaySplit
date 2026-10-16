@@ -44,6 +44,10 @@ export default function CustomerDetail({ id }) {
   const period = periods[index];
   const prev = index > 0 ? periods[index - 1] : null;
 
+  // The employees' share entered for a payment, in the customer's currency (older payments were
+  // saved as revenue x share %).
+  const shareOf = (p) => (p.amount != null ? p.amount * (p.share_pct ?? 1) : 0);
+
   const choosePeriod = (pid) => {
     if (pid === selectedId) return;
     if (dirty && !window.confirm('You have unsaved changes in this period. Discard them?')) return;
@@ -109,13 +113,13 @@ export default function CustomerDetail({ id }) {
         <h2 id="shares-label">Share types</h2>
         <div className="period-tabs" role="tablist" aria-labelledby="shares-label">
           {groups.map((g) => {
-            const revenue = g.periods.reduce((s, p) => s + (p.amount || 0), 0);
+            const entered = g.periods.reduce((s, p) => s + shareOf(p), 0);
             return (
               <button key={g.key} role="tab" aria-selected={g === activeGroup} disabled={!g.periods.length}
-                className={`period-tab ${revenue > 0 ? 'has-revenue' : ''}`} onClick={() => g.periods[0] && choosePeriod(g.periods[0].id)}>
+                className={`period-tab ${entered > 0 ? 'has-revenue' : ''}`} onClick={() => g.periods[0] && choosePeriod(g.periods[0].id)}>
                 <span>{g.name}</span>
                 <small>{g.months}</small>
-                <small>{revenue > 0 ? money(revenue, customer.currency) : 'No revenue'}</small>
+                <small>{entered > 0 ? `${money(entered, customer.currency)} for employees` : 'Nothing entered'}</small>
               </button>
             );
           })}
@@ -129,7 +133,7 @@ export default function CustomerDetail({ id }) {
                 <button key={p.id} role="tab" aria-selected={p.id === selectedId}
                   className={`period-tab ${p.revenue > 0 ? 'has-revenue' : ''}`} onClick={() => choosePeriod(p.id)}>
                   <span>{periodLabel(p)}</span>
-                  <small>{p.amount > 0 ? money(p.amount, customer.currency) : 'No revenue'}</small>
+                  <small>{shareOf(p) > 0 ? money(shareOf(p), customer.currency) : 'Nothing entered'}</small>
                 </button>
               ))}
             </div>
