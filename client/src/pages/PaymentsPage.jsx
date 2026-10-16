@@ -4,8 +4,8 @@ import { monthLabel, pct, dayLabel, moneyList, CURRENCIES } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 
 // Same as the "All Payments" sheet: one row per employee per category per period.
-// An Employee login gets only their own rows (the server filters them). Revenue is in the customer's
-// currency; pay is in the payment's currency (INR when the payment was converted).
+// An Employee login gets only their own rows (the server filters them). Pay is in the payment's
+// currency (INR when the payment was converted). Total revenue isn't shown, only the employees' share.
 export default function PaymentsPage({ isAdmin }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
@@ -36,11 +36,11 @@ export default function PaymentsPage({ isAdmin }) {
   const paidTotals = sumBy('paid');
 
   const exportCsv = () => {
-    const header = ['Customer', 'Period', 'Month', 'Year', 'Category', 'Employee', 'Revenue', 'Revenue currency', 'Share for employees %',
-      'Rate to INR', 'Employee pool', 'Category %', 'Weightage %', 'Pay', 'Pay currency', 'Status', 'Paid on', 'Paid amount'];
+    const header = ['Customer', 'Period', 'Month', 'Year', 'Category', 'Employee',
+      'Rate to INR', 'Employees\' share', 'Category %', 'Weightage %', 'Pay', 'Pay currency', 'Status', 'Paid on', 'Paid amount'];
     const lines = visible.map((r) => [
       r.customer, monthLabel(r.start_month), Number(r.start_month.slice(5)), Number(r.start_month.slice(0, 4)),
-      r.category, r.employee, r.amount ?? '', r.customer_currency, r.share_pct != null ? +(r.share_pct * 100).toFixed(4) : '',
+      r.category, r.employee,
       r.fx_rate ?? '', r.revenue, +(r.category_pct * 100).toFixed(4), +(r.weightage * 100).toFixed(4), r.pay.toFixed(2), r.currency,
       r.paid_on ? 'Paid' : 'Unpaid', r.paid_on || '', r.paid_on ? r.paid.toFixed(2) : '',
     ]);
@@ -117,7 +117,6 @@ export default function PaymentsPage({ isAdmin }) {
                   <th scope="col">Customer</th>
                   <th scope="col">Category</th>
                   <th scope="col">Employee</th>
-                  <th scope="col" className="num">Revenue</th>
                   <th scope="col" className="num">Category</th>
                   <th scope="col" className="num">Weightage</th>
                   <th scope="col" className="num">Pay</th>
@@ -131,7 +130,6 @@ export default function PaymentsPage({ isAdmin }) {
                     <td>{isAdmin ? <a href={`#/customers/${r.customer_id}`}>{r.customer}</a> : r.customer}</td>
                     <td>{r.category}</td>
                     <th scope="row">{r.employee}</th>
-                    <td><Money value={r.amount} currency={r.customer_currency} /></td>
                     <td className="num">{pct(r.category_pct)}</td>
                     <td className="num">{pct(r.weightage)}</td>
                     <td className="strong"><Money value={r.pay} currency={r.currency} /></td>
@@ -141,7 +139,7 @@ export default function PaymentsPage({ isAdmin }) {
               </tbody>
               <tfoot>
                 <tr>
-                  <th scope="row" colSpan={7}>Total for {visible.length} row{visible.length === 1 ? '' : 's'}</th>
+                  <th scope="row" colSpan={6}>Total for {visible.length} row{visible.length === 1 ? '' : 's'}</th>
                   <td className="num">{moneyList(totals) || '–'}</td>
                   <td className="small">Paid {moneyList(paidTotals) || '–'}</td>
                 </tr>
