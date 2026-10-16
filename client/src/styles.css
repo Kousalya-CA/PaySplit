@@ -413,3 +413,7 @@ a.secondary { display: inline-block; text-decoration: none; }
 .split-grid .split-sum th, .split-grid .split-sum td { background: var(--lilac); }
 .split-grid td { white-space: nowrap; }
 .usd-calc.payout legend { font-weight: 600; }
+/* Revenue share: payment date / billing, and payment type / payout months, three equal columns on one line */
+.share .row.share-line { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
+.share .row.share-line > label, .share .row.share-line > label.month-field { min-width: 0; }
+@media (max-width: 600px) { .share .row.share-line { grid-template-columns: 1fr; } }

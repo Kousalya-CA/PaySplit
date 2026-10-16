@@ -126,7 +126,7 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
               </div>
             )}
 
-            <div className="row">
+            <div className="row share-line">
               <label className="month-field">
                 <span>1. Payment date</span>
                 <input type="month" value={s.from_month} min={onboard} required onChange={(e) => changeDate(s, e.target.value)} />
@@ -147,7 +147,7 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
               {first && s.from_month && onboard && s.from_month !== onboard && ` Onboarded ${monthLabel(onboard)}; billing starts ${monthLabel(s.from_month)}.`}
             </p>
 
-            <div className="row">
+            <div className="row share-line">
               <label>
                 <span>3. Payment type</span>
                 <select value={s.payout_type || 'once'} onChange={(e) => changeType(s, e.target.value)}>
