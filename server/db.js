@@ -331,7 +331,8 @@ if (!db.prepare('PRAGMA table_info(allocations)').all().some((c) => c.name === '
 // the first quarter paid this way is 'first_quarter'). Each employee gets a line per currency:
 // submitted (amount frozen, with a comment) -> approved by a different admin -> paid. payout_items is
 // each line's breakdown (contributor row and month), frozen at submission; a row in a line is locked.
-// payout_notes holds the comment for an employee before submitting (and the reason if sent back).
+// payout_notes holds the comment for an employee before submitting (and the undo comment if its submission was undone).
+// payout_log is the history of every step (submitted, approved, undone, paid) with its comment.
 db.exec(`
   CREATE TABLE IF NOT EXISTS payout_settings (
     key   TEXT PRIMARY KEY,
@@ -380,6 +381,19 @@ db.exec(`
     updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (quarter, employee_id)
   );
+  -- What happened to each employee's line in a quarter (submit, approve, undo, paid), with the comment.
+  CREATE TABLE IF NOT EXISTS payout_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    quarter     TEXT NOT NULL,
+    employee_id INTEGER NOT NULL REFERENCES employees(id),
+    currency    TEXT NOT NULL,
+    amount      REAL NOT NULL,
+    action      TEXT NOT NULL,                   -- submitted, approved, undo_approve, undo_submit, paid
+    comment     TEXT,
+    by_name     TEXT,
+    at          TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_payout_log_quarter ON payout_log(quarter);
 `);
 
 // The payments views. payment_base has one row per contributor with its share's category % and the

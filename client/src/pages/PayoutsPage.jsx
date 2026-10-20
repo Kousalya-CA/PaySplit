@@ -5,13 +5,15 @@ import { Loading, ErrorNote } from '../components/common.jsx';
 
 // Quarterly payouts (admins). Pay for a month belongs to its calendar quarter and is paid in the pay
 // month (N months after the quarter ends). For a quarter: write a comment for each employee and
-// submit (amounts are frozen); a different admin approves each employee's line (or all at once) or
-// sends it back with a reason; then approved lines are marked paid with the payroll date.
+// submit (amounts are frozen); a different admin approves each employee's line (or all at once); then
+// approved lines are marked paid with the payroll date. Until paid, an approval or a submission can be
+// undone with a comment. The History list shows every step with its comment.
 export default function PayoutsPage({ quarter, user }) {
   return quarter ? <QuarterPayout quarter={quarter} user={user} /> : <PayoutList />;
 }
 
-const todayIso = () => new Date().toLocaleDateString('en-CA');
+const historyLabel = { submitted: 'Submitted', approved: 'Approved', undo_approve: 'Approval undone', undo_submit: 'Submission undone', paid: 'Paid' };
+const todayIso = () =>new Date().toLocaleDateString('en-CA');
 const moneyList = (list) => (list.length ? list.map((x) => moneyIn(x.amount, x.currency)).join(' · ') : '–');
 
 function PayoutList() {
@@ -130,12 +132,15 @@ function QuarterPayout({ quarter, user }) {
     if (comment === null) return;
     act(`line-${line.id}`, () => api.payouts.approve(line.id, comment), `Approved ${line.employee}.`);
   };
-  const sendBack = (line) => {
-    const reason = window.prompt(`Send ${line.employee}'s line back? Say why:`, '');
-    if (reason === null) return;
-    if (!reason.trim()) { setError('Say why it\'s being sent back.'); return; }
-    act(`line-${line.id}`, () => api.payouts.sendBack(line.id, reason), `${line.employee}'s line was sent back.`);
+  // Undo needs a comment saying why.
+  const undo = (line, what, fn, done) => {
+    const comment = window.prompt(`Undo the ${what} of ${line.employee}'s ${moneyIn(line.amount, line.currency)}? Add a comment saying why:`, '');
+    if (comment === null) return;
+    if (!comment.trim()) { setError(`Add a comment saying why the ${what} is undone.`); return; }
+    act(`line-${line.id}`, () => fn(line.id, comment), done);
   };
+  const undoApprove = (line) => undo(line, 'approval', api.payouts.undoApprove, `${line.employee}'s approval was undone; it's waiting for approval again.`);
+  const undoSubmit = (line) => undo(line, 'submission', api.payouts.undoSubmit, `${line.employee}'s submission was undone; it's back in To submit.`);
 
   const submitted = data.lines.filter((l) => l.status === 'submitted');
   const approvable = submitted.filter((l) => l.can_approve);
@@ -200,7 +205,7 @@ function QuarterPayout({ quarter, user }) {
                           <button type="button" className="drill" aria-expanded={open.has(key)} onClick={() => toggle(key)}>
                             <span className="drill-caret" aria-hidden="true">▸</span>{g.employee}
                           </button>
-                          {g.sent_back_reason && <div className="warn-text small">Sent back by {g.sent_back_by}: {g.sent_back_reason}</div>}
+                          {g.sent_back_reason && <div className="warn-text small">Submission undone by {g.sent_back_by}: {g.sent_back_reason}</div>}
                         </th>
                         <td className="num strong">{moneyIn(g.amount, g.currency)}</td>
                         <td>
@@ -226,7 +231,7 @@ function QuarterPayout({ quarter, user }) {
               {busy === 'submit' ? 'Submitting…' : `Submit ${data.draft.length} for approval`}
             </button>
           </div>
-          <p className="muted small">Submitting freezes these amounts; the pay in them can't be changed on the payment pages unless the line is sent back.</p>
+          <p className="muted small">Submitting freezes these amounts; the pay in them can't be changed on the payment pages unless the submission is undone.</p>
         </>
       )}
 
@@ -296,7 +301,8 @@ function QuarterPayout({ quarter, user }) {
                               Mark paid
                             </button>
                           )}
-                          {l.status !== 'paid' && <button className="link danger" disabled={busy !== ''} onClick={() => sendBack(l)}>Send back</button>}
+                          {l.status === 'submitted' && <button className="link danger" disabled={busy !== ''} onClick={() => undoSubmit(l)}>Undo submit</button>}
+                          {l.status === 'approved' && <button className="link danger" disabled={busy !== ''} onClick={() => undoApprove(l)}>Undo approve</button>}
                         </td>
                       </tr>
                       {open.has(key) && <Breakdown items={l.items} currency={l.currency} colSpan={5} />}
@@ -311,6 +317,34 @@ function QuarterPayout({ quarter, user }) {
           </div>
           {approved.length === 0 && <p className="muted small">"Mark paid" appears once lines are approved; it uses the Paid on date.</p>}
         </>
+      )}
+
+      <h2>History</h2>
+      {data.history.length === 0 ? (
+        <p className="muted">Nothing has happened in this quarter yet.</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="grid list">
+            <thead>
+              <tr>
+                <th scope="col">When (UTC)</th><th scope="col">Employee</th><th scope="col" className="num">Amount</th>
+                <th scope="col">What</th><th scope="col">By</th><th scope="col">Comment</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.history.map((h) => (
+                <tr key={h.id}>
+                  <td className="small">{h.at.slice(0, 16)}</td>
+                  <td>{h.employee}</td>
+                  <td className="num">{moneyIn(h.amount, h.currency)}</td>
+                  <td className={h.action.startsWith('undo') ? 'warn-text' : ''}>{historyLabel[h.action] || h.action}</td>
+                  <td className="small">{h.by_name}</td>
+                  <td className="small">{h.comment || <span className="muted">–</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );

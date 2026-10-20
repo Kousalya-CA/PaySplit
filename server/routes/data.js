@@ -420,7 +420,7 @@ function assertPaidUnchanged(customerId, before) {
   // Pay in a quarterly payout line is frozen: it must still work out to the same amount and month.
   for (const r of q.payoutFrozen.all(customerId)) {
     if (r.part_amount == null || Math.abs(round2(r.part_amount) - r.amount) > 0.005 || r.now_month !== r.part_month) {
-      throw new HttpError(409, `${r.employee}'s pay for ${r.part_month} is in a quarterly payout, so this change would alter it. Send that payout line back first.`);
+      throw new HttpError(409, `${r.employee}'s pay for ${r.part_month} is in a quarterly payout, so this change would alter it. Undo that payout line (on the Payouts page) first.`);
     }
   }
   for (const r of q.paidForCustomer.all(customerId)) {
@@ -713,7 +713,7 @@ export function registerDataRoutes(router) {
       for (const p of paidRows) {
         const sent = list.find((a) => a.category === p.category && Number(a.employee_id) === p.employee_id && partOf(a) === p.part);
         if (!sent || !same(Number(sent.weightage), p.weightage)) {
-          throw new HttpError(409, `${p.employee}'s ${p.category} pay is marked as paid or is in a quarterly payout, so it can't be changed or removed. Undo the paid mark, or send the payout line back, first.`);
+          throw new HttpError(409, `${p.employee}'s ${p.category} pay is marked as paid or is in a quarterly payout, so it can't be changed or removed. Undo the paid mark, or undo the payout line on the Payouts page, first.`);
         }
       }
     }

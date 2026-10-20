@@ -36,8 +36,10 @@ It works the same way as the workbook:
    (Oct to Dec, Jan to Mar, ...) and is paid in the pay month, 1 month after the quarter by default
    (so Oct to Dec is paid in January). For a quarter, an admin writes a **comment for each employee**
    and submits it (the amounts are frozen and that pay is locked on the payment pages); a **different
-   admin approves** each employee's line, or all at once, or sends it back with a reason; then the
-   approved lines are marked paid with the payroll date. Pay added later for a quarter that's already
+   admin approves** each employee's line, or all at once, then the
+   approved lines are marked paid with the payroll date. Until paid, an approval can be undone (the line
+   waits for approval again) and a submission undone (its pay is back in To submit), each with a comment;
+   the quarter's **History** shows every step, who did it and the comment. Pay added later for a quarter that's already
    paid goes into the next quarter. Employees see their own statements and comments on My pay.
    Quarterly payouts start with Q4 2026; pay marked paid before that stays as it was.
 7. **Summary** shows each employee's pay per month and per year (in the payment date month, or in each
@@ -176,7 +178,8 @@ payout_settings          key, value (pay_lag, first_quarter)
 payout_runs              id, quarter
 payout_lines             run, employee, currency, amount, comment, status (submitted/approved/paid), who/when, approver_comment, paid_on
 payout_items             line, allocation, part (month), part_month, amount (frozen)
-payout_notes             quarter, employee, comment before submitting, sent_back_reason
+payout_notes             quarter, employee, comment before submitting, sent_back_reason (undo-submit comment)
+payout_log               quarter, employee, currency, amount, action (submitted/approved/undo_approve/undo_submit/paid), comment, by, at
 azdo_settings            key, value (Azure DevOps organisation and project)
 azdo_areas               id, path, name, display_name
 azdo_iterations          id, area_id, path, name, start_date, finish_date

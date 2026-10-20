@@ -1,7 +1,9 @@
 // Quarterly payouts: pay for a month belongs to its calendar quarter and is paid in that quarter's
 // payout, in the pay month (N months after the quarter ends). An admin writes a comment for each
 // employee and submits the quarter (amounts are frozen); a different admin approves each employee's
-// line (or all at once) or sends it back; then lines are marked paid with the payroll date.
+// line (or all at once); then lines are marked paid with the payroll date. Until paid, an approval can
+// be undone (back to submitted) and a submission undone (back to "to submit"), each with a comment.
+// Every step is written to payout_log with its comment.
 // Employees see their own submitted statements. See payout_* tables in db.js.
 import { db, transaction } from '../db.js';
 import { HttpError } from '../http.js';
@@ -53,7 +55,12 @@ const q = {
   approve: db.prepare(`UPDATE payout_lines SET status = 'approved', approved_by_id = ?, approved_by = ?, approved_at = datetime('now'),
     approver_comment = ? WHERE id = ? AND status = 'submitted'`),
   paid: db.prepare("UPDATE payout_lines SET status = 'paid', paid_on = ?, paid_by = ? WHERE id = ? AND status = 'approved'"),
+  unapprove: db.prepare(`UPDATE payout_lines SET status = 'submitted', approved_by_id = NULL, approved_by = NULL, approved_at = NULL,
+    approver_comment = NULL WHERE id = ? AND status = 'approved'`),
   deleteLine: db.prepare('DELETE FROM payout_lines WHERE id = ?'),
+  log: db.prepare('INSERT INTO payout_log (quarter, employee_id, currency, amount, action, comment, by_name) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+  history: db.prepare(`SELECT g.*, e.name AS employee FROM payout_log g JOIN employees e ON e.id = g.employee_id
+    WHERE g.quarter = ? ORDER BY g.id DESC`),
   notes: db.prepare('SELECT * FROM payout_notes WHERE quarter = ?'),
   saveNote: db.prepare(`
     INSERT INTO payout_notes (quarter, employee_id, comment) VALUES (?, ?, ?)
@@ -87,7 +94,7 @@ function state() {
     if (!linesBy.has(l.quarter)) linesBy.set(l.quarter, []);
     linesBy.get(l.quarter).push(l);
   }
-  // A quarter is done once every line is paid and nothing sent back is waiting to be resubmitted.
+  // A quarter is done once every line is paid and nothing undone is waiting to be resubmitted.
   const waiting = new Set(q.sentBackQuarters.all().map((r) => r.quarter));
   const closed = (qq) => !waiting.has(qq) && (linesBy.get(qq) || []).length > 0 && linesBy.get(qq).every((l) => l.status === 'paid');
   const draft = new Map(); // quarter -> Map('employee|currency' -> group)
@@ -119,6 +126,16 @@ function requireQuarter(value) {
   const quarter = String(value ?? '').toUpperCase();
   if (!QUARTER_RE.test(quarter)) throw new HttpError(404, 'Quarter not found.');
   return quarter;
+}
+const byName = (user) => user.name || user.email;
+const logLine = (line, action, comment, user) =>
+  q.log.run(line.quarter, line.employee_id, line.currency, line.amount, action, comment || null, byName(user));
+// The comment an undo needs.
+function requireComment(body, what) {
+  const comment = String(body?.comment ?? '').trim();
+  if (!comment) throw new HttpError(400, `Add a comment saying why the ${what} is undone.`);
+  if (comment.length > 2000) throw new HttpError(400, 'Keep the comment to 2000 characters or fewer.');
+  return comment;
 }
 function requireLine(id) {
   const line = q.line.get(id);
@@ -190,6 +207,7 @@ export function registerPayoutRoutes(router) {
         can_approve: l.status === 'submitted' && adminCount >= 2 && l.submitted_by_id !== user.id,
       })),
       admin_count: adminCount,
+      history: q.history.all(quarter),
     };
   }, admin);
 
@@ -222,6 +240,7 @@ export function registerPayoutRoutes(router) {
           user.id, user.name || user.email).lastInsertRowid);
         for (const it of g.items) q.insertItem.run(lineId, it.allocation_id, it.part, it.part_month, round2(it.amount));
         q.clearSentBack.run(quarter, g.employee_id);
+        q.log.run(quarter, g.employee_id, g.currency, g.amount, 'submitted', notes.get(g.employee_id)?.comment || null, byName(user));
       }
     });
     return { ok: true };
@@ -232,7 +251,10 @@ export function registerPayoutRoutes(router) {
     if (line.status !== 'submitted') throw new HttpError(409, `${line.employee}'s line is already ${line.status}.`);
     assertCanApprove(line, user);
     const comment = String(body?.comment ?? '').trim() || null;
-    q.approve.run(user.id, user.name || user.email, comment, line.id);
+    transaction(() => {
+      q.approve.run(user.id, byName(user), comment, line.id);
+      logLine(line, 'approved', comment, user);
+    });
     return { ok: true };
   }, admin);
 
@@ -244,20 +266,42 @@ export function registerPayoutRoutes(router) {
     if (q.adminCount.get().n < 2) throw new HttpError(409, 'Approving needs a second admin: the admin who submits can\'t approve. Add another admin on the Users page.');
     const mine = lines.filter((l) => l.submitted_by_id !== user.id);
     if (!mine.length) throw new HttpError(403, 'You submitted every waiting line, so another admin has to approve them.');
-    transaction(() => { for (const l of mine) q.approve.run(user.id, user.name || user.email, null, l.id); });
+    transaction(() => {
+      for (const l of mine) {
+        q.approve.run(user.id, byName(user), null, l.id);
+        logLine(l, 'approved', 'Approve all', user);
+      }
+    });
     return { ok: true, approved: mine.length, skipped: lines.length - mine.length };
   }, admin);
 
-  // Send a line back (with a reason): it's removed, its pay is back to "to submit" in the quarter,
-  // and the comment and reason are kept for the next submission.
-  router.post('/api/payout-lines/:id/send-back', ({ params, body, user }) => {
+  // Undo an approval (with a comment): the line is back to submitted and needs approving again.
+  router.post('/api/payout-lines/:id/undo-approve', ({ params, body, user }) => {
     const line = requireLine(params.id);
-    if (line.status === 'paid') throw new HttpError(409, `${line.employee}'s line is already paid, so it can't be sent back.`);
-    const reason = String(body?.reason ?? '').trim();
-    if (!reason) throw new HttpError(400, 'Say why it\'s being sent back.');
+    if (line.status !== 'approved') throw new HttpError(409, `${line.employee}'s line is ${line.status}, not approved.`);
+    const comment = requireComment(body, 'approval');
     transaction(() => {
-      q.sendBackNote.run(line.quarter, line.employee_id, line.comment, reason, user.name || user.email);
+      q.unapprove.run(line.id);
+      logLine(line, 'undo_approve', comment, user);
+    });
+    return { ok: true };
+  }, admin);
+
+  // Undo a submission (with a comment): the line is removed, its pay is back to "to submit" in the
+  // quarter, and its comment and the undo comment are kept for the next submission. An approved line's
+  // approval is undone first.
+  router.post('/api/payout-lines/:id/undo-submit', ({ params, body, user }) => {
+    const line = requireLine(params.id);
+    if (line.status !== 'submitted') {
+      throw new HttpError(409, line.status === 'approved'
+        ? `${line.employee}'s line is approved. Undo the approval first.`
+        : `${line.employee}'s line is already paid, so it can't be undone.`);
+    }
+    const comment = requireComment(body, 'submission');
+    transaction(() => {
+      q.sendBackNote.run(line.quarter, line.employee_id, line.comment, comment, byName(user));
       q.deleteLine.run(line.id);
+      logLine(line, 'undo_submit', comment, user);
     });
     return { ok: true };
   }, admin);
@@ -265,7 +309,11 @@ export function registerPayoutRoutes(router) {
   router.post('/api/payout-lines/:id/paid', ({ params, body, user }) => {
     const line = requireLine(params.id);
     if (line.status !== 'approved') throw new HttpError(409, `${line.employee}'s line has to be approved before it's paid.`);
-    q.paid.run(parsePaidOn(body?.paid_on), user.email || null, line.id);
+    const paidOn = parsePaidOn(body?.paid_on);
+    transaction(() => {
+      q.paid.run(paidOn, user.email || null, line.id);
+      logLine(line, 'paid', `Paid on ${paidOn}`, user);
+    });
     return { ok: true };
   }, admin);
 
@@ -274,7 +322,12 @@ export function registerPayoutRoutes(router) {
     const paidOn = parsePaidOn(body?.paid_on);
     const lines = (state().linesBy.get(quarter) || []).filter((l) => l.status === 'approved');
     if (!lines.length) throw new HttpError(400, 'No approved lines to mark as paid.');
-    transaction(() => { for (const l of lines) q.paid.run(paidOn, user.email || null, l.id); });
+    transaction(() => {
+      for (const l of lines) {
+        q.paid.run(paidOn, user.email || null, l.id);
+        logLine(l, 'paid', `Paid on ${paidOn}`, user);
+      }
+    });
     return { ok: true, paid: lines.length };
   }, admin);
 

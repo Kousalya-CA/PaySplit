@@ -293,7 +293,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
       {anyPaid && (
         <p className="muted small">
-          🔒 The employees' share and payment details are locked because someone in this payment is in a quarterly payout (or was paid before payouts). Send the payout lines back on the Payouts page to change them.
+          🔒 The employees' share and payment details are locked because someone in this payment is in a quarterly payout (or was paid before payouts). Undo the payout lines on the Payouts page to change them.
         </p>
       )}
       <fieldset className="usd-calc" disabled={anyPaid}>
