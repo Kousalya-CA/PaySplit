@@ -27,11 +27,14 @@ export const getCookie = (req, name) =>
   (req.headers.cookie || '').split(';').map((c) => c.trim().split('='))
     .find(([k]) => k === name)?.[1];
 
+// Parameters are numbers unless listed here with the text they match.
+const TEXT_PARAMS = { quarter: '\\d{4}-Q[1-4]' };
+
 export function createRouter() {
   const routes = [];
   const add = (method) => (pattern, handler, { auth = true, admin = false } = {}) => {
     const keys = [];
-    const source = pattern.replace(/:(\w+)/g, (_, key) => { keys.push(key); return '(\\d+)'; });
+    const source = pattern.replace(/:(\w+)/g, (_, key) => { keys.push(key); return `(${TEXT_PARAMS[key] || '\\d+'})`; });
     routes.push({ method, re: new RegExp(`^${source}$`), keys, handler, auth, admin });
   };
   return {
@@ -40,7 +43,7 @@ export function createRouter() {
       for (const r of routes) {
         if (r.method !== method) continue;
         const m = path.match(r.re);
-        if (m) return { route: r, params: Object.fromEntries(r.keys.map((k, i) => [k, Number(m[i + 1])])) };
+        if (m) return { route: r, params: Object.fromEntries(r.keys.map((k, i) => [k, TEXT_PARAMS[k] ? m[i + 1] : Number(m[i + 1])])) };
       }
       return null;
     },
