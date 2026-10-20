@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { monthLabel, pct, dayLabel, moneyList, CURRENCIES } from '../format.js';
+import { monthLabel, pct, dayLabel, moneyList, CURRENCIES, quarterLabel, payoutStatusLabel } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 
 // Same as the "All Payments" sheet: one row per employee per category per period (one row per month
@@ -38,13 +38,13 @@ export default function PaymentsPage({ isAdmin }) {
 
   const exportCsv = () => {
     const header = ['Customer', 'Pay month', 'Month', 'Year', 'Period', 'Payment type', 'Part', 'Parts', 'Category', 'Employee',
-      'Rate to INR', 'Employees\' share', 'Category %', 'Weightage %', 'Pay (this month)', 'Pay currency', 'Contributor pay for the payment', 'Status', 'Paid on', 'Paid amount'];
+      'Rate to INR', 'Employees\' share', 'Category %', 'Weightage %', 'Pay (this month)', 'Pay currency', 'Contributor pay for the payment', 'Status', 'Paid on', 'Paid amount', 'Payout', 'Payout status'];
     const lines = visible.map((r) => [
       r.customer, monthLabel(r.month), Number(r.month.slice(5)), Number(r.month.slice(0, 4)), monthLabel(r.start_month),
       r.payout_type === 'custom' ? 'Custom' : 'One time', r.part, r.parts,
       r.category, r.employee,
       r.fx_rate ?? '', r.revenue, +(r.category_pct * 100).toFixed(4), +(r.weightage * 100).toFixed(4), r.pay.toFixed(2), r.currency, r.total_pay.toFixed(2),
-      r.paid_on ? 'Paid' : 'Unpaid', r.paid_on || '', r.paid_on ? r.paid.toFixed(2) : '',
+      r.paid_on ? 'Paid' : 'Unpaid', r.paid_on || '', r.paid_on ? r.paid.toFixed(2) : '', r.payout_quarter ? quarterLabel(r.payout_quarter) : '', r.payout_status ? payoutStatusLabel[r.payout_status] : '',
     ]);
     const csv = [header, ...lines].map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -138,7 +138,10 @@ export default function PaymentsPage({ isAdmin }) {
                     <td className="num">{pct(r.category_pct)}</td>
                     <td className="num">{pct(r.weightage)}</td>
                     <td className="strong"><Money value={r.pay} currency={r.currency} /></td>
-                    <td>{r.paid_on ? <span className="paid-tag">✓ Paid {dayLabel(r.paid_on)}</span> : <span className="muted">Unpaid</span>}</td>
+                    <td>
+                      {r.paid_on ? <span className="paid-tag">✓ Paid {dayLabel(r.paid_on)}</span> : <span className="muted">Unpaid</span>}
+                      {r.payout_quarter && <div className="muted small">{quarterLabel(r.payout_quarter)} payout · {payoutStatusLabel[r.payout_status]}</div>}
+                    </td>
                   </tr>
                 ))}
               </tbody>

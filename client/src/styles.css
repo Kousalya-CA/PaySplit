@@ -417,3 +417,10 @@ a.secondary { display: inline-block; text-decoration: none; }
 .share .row.share-line { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
 .share .row.share-line > label, .share .row.share-line > label.month-field { min-width: 0; }
 @media (max-width: 600px) { .share .row.share-line { grid-template-columns: 1fr; } }
+/* Quarterly payouts */
+.payout-settings { align-items: flex-end; margin: .75rem 0 1rem; }
+.payout-settings label { max-width: 22rem; }
+.page .grid textarea { width: 100%; min-width: 14rem; }
+.payout-bulk { align-items: flex-end; margin: .5rem 0; }
+.payout-items td { padding: .2rem .5rem; }
+.statements { margin: 1rem 0 1.5rem; }

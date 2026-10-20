@@ -316,6 +316,62 @@ if (!db.prepare('PRAGMA table_info(allocations)').all().some((c) => c.name === '
   }
 }
 
+// Quarterly payouts. Pay for a month belongs to its calendar quarter and is paid in a payout run for
+// that quarter (pay month = N months after the quarter ends, payout_settings 'pay_lag', 1 by default;
+// the first quarter paid this way is 'first_quarter'). Each employee gets a line per currency:
+// submitted (amount frozen, with a comment) -> approved by a different admin -> paid. payout_items is
+// each line's breakdown (contributor row and month), frozen at submission; a row in a line is locked.
+// payout_notes holds the comment for an employee before submitting (and the reason if sent back).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payout_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  INSERT OR IGNORE INTO payout_settings (key, value) VALUES ('pay_lag', '1'), ('first_quarter', '2026-Q4');
+  CREATE TABLE IF NOT EXISTS payout_runs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    quarter    TEXT NOT NULL UNIQUE,              -- '2026-Q4'
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS payout_lines (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id           INTEGER NOT NULL REFERENCES payout_runs(id) ON DELETE CASCADE,
+    employee_id      INTEGER NOT NULL REFERENCES employees(id),
+    currency         TEXT NOT NULL,
+    amount           REAL NOT NULL,
+    comment          TEXT,
+    status           TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'approved', 'paid')),
+    submitted_by_id  INTEGER,
+    submitted_by     TEXT,
+    submitted_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    approver_comment TEXT,
+    approved_by_id   INTEGER,
+    approved_by      TEXT,
+    approved_at      TEXT,
+    paid_on          TEXT,
+    paid_by          TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_payout_lines_run ON payout_lines(run_id);
+  CREATE TABLE IF NOT EXISTS payout_items (
+    line_id       INTEGER NOT NULL REFERENCES payout_lines(id) ON DELETE CASCADE,
+    allocation_id INTEGER NOT NULL REFERENCES allocations(id),
+    part          INTEGER NOT NULL,               -- 1 for a whole payment, else the month of a custom payment
+    part_month    TEXT NOT NULL,
+    amount        REAL NOT NULL,
+    PRIMARY KEY (allocation_id, part)
+  );
+  CREATE INDEX IF NOT EXISTS idx_payout_items_line ON payout_items(line_id);
+  CREATE TABLE IF NOT EXISTS payout_notes (
+    quarter          TEXT NOT NULL,
+    employee_id      INTEGER NOT NULL REFERENCES employees(id),
+    comment          TEXT,
+    sent_back_reason TEXT,
+    sent_back_by     TEXT,
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (quarter, employee_id)
+  );
+`);
+
 // The payments views. payment_base has one row per contributor with its share's category % and the
 // payout (payment date, and for custom payments the months: the payment's own, else the share's moved
 // along to this payment, else 12 months from the payment month). Monthly payments are always one
@@ -331,6 +387,10 @@ if (!db.prepare('PRAGMA table_info(allocations)').all().some((c) => c.name === '
   const CUSTOM = `(c.frequency <> 'Monthly' AND COALESCE(p.payout_type, s.payout_type, 'once') = 'custom')`;
   const FROM = `COALESCE(p.pay_from, ${SHIFT('s.pay_from')}, p.pay_month, p.start_month)`;
   const TO = `COALESCE(p.pay_to, ${SHIFT('s.pay_to')})`;
+  const OLD_PAID_ON = 'CASE WHEN x.alloc_part IS NOT NULL OR x.parts = 1 THEN x.paid_on ELSE pp.paid_on END';
+  const OLD_PAID = 'CASE WHEN x.alloc_part IS NOT NULL OR x.parts = 1 THEN x.paid ELSE COALESCE(pp.paid_amount, 0) END';
+  // A month's part of a row's pay (the whole pay for one time; legacy rows split evenly, the last part taking the rounding).
+  const PART_AMOUNT = 'CASE WHEN x.alloc_part IS NOT NULL OR x.parts = 1 THEN x.pay WHEN seq.n = x.parts - 1 THEN x.pay - ROUND(x.pay / x.parts, 2) * (x.parts - 1) ELSE ROUND(x.pay / x.parts, 2) END';
   db.exec(`
     DROP VIEW IF EXISTS pay_parts;
     DROP VIEW IF EXISTS payments;
@@ -383,13 +443,21 @@ if (!db.prepare('PRAGMA table_info(allocations)').all().some((c) => c.name === '
     WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n < 119)
     SELECT x.*, COALESCE(x.alloc_part, seq.n + 1) AS part,
       substr(date(x.part_from || '-01', '+' || (COALESCE(x.alloc_part, seq.n + 1) - 1) || ' months'), 1, 7) AS part_month,
-      CASE WHEN x.alloc_part IS NOT NULL OR x.parts = 1 THEN x.pay
-           WHEN seq.n = x.parts - 1 THEN x.pay - ROUND(x.pay / x.parts, 2) * (x.parts - 1)
-           ELSE ROUND(x.pay / x.parts, 2) END AS part_amount,
-      CASE WHEN x.alloc_part IS NOT NULL OR x.parts = 1 THEN x.paid_on ELSE pp.paid_on END AS part_paid_on,
-      CASE WHEN x.alloc_part IS NOT NULL OR x.parts = 1 THEN x.paid ELSE COALESCE(pp.paid_amount, 0) END AS part_paid
+      ${PART_AMOUNT} AS part_amount,
+      -- paid before quarterly payouts (a paid mark on the row, or on one of its months)
+      ${OLD_PAID_ON} AS old_paid_on,
+      ${OLD_PAID} AS old_paid,
+      -- quarterly payout: the line it's in, if any (paid once that line is paid)
+      pi.line_id AS payout_line_id,
+      pl.status  AS payout_status,
+      pr.quarter AS payout_quarter,
+      COALESCE(${OLD_PAID_ON}, CASE WHEN pl.status = 'paid' THEN pl.paid_on END) AS part_paid_on,
+      CASE WHEN ${OLD_PAID} > 0 THEN ${OLD_PAID} WHEN pl.status = 'paid' THEN ${PART_AMOUNT} ELSE 0 END AS part_paid
     FROM payments x JOIN seq ON (x.alloc_part IS NOT NULL AND seq.n = 0) OR (x.alloc_part IS NULL AND seq.n < x.parts)
-    LEFT JOIN part_paid pp ON x.alloc_part IS NULL AND pp.allocation_id = x.id AND pp.seq = seq.n + 1;
+    LEFT JOIN part_paid pp ON x.alloc_part IS NULL AND pp.allocation_id = x.id AND pp.seq = seq.n + 1
+    LEFT JOIN payout_items pi ON pi.allocation_id = x.id AND pi.part = COALESCE(x.alloc_part, seq.n + 1)
+    LEFT JOIN payout_lines pl ON pl.id = pi.line_id
+    LEFT JOIN payout_runs  pr ON pr.id = pl.run_id;
   `);
 }
 

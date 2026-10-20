@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { moneyIn, currencySymbol, monthLabel } from '../format.js';
+import { moneyIn, currencySymbol, monthLabel, quarterLabel, payoutStatusLabel, dayLabel } from '../format.js';
 import { Loading, ErrorNote, Money as MoneyIn } from '../components/common.jsx';
 
 // Same as the "Monthly Summary" sheet: pay per employee per month, then yearly totals.
@@ -14,6 +14,9 @@ export default function SummaryPage({ isAdmin }) {
   const [currency, setCurrency] = useState('');
 
   useEffect(() => { api.summary(currency).then(setData).catch((e) => setError(e.message)); }, [currency]);
+  // An employee's own quarterly statements.
+  const [statements, setStatements] = useState([]);
+  useEffect(() => { if (!isAdmin) api.payouts.mine().then(setStatements).catch(() => {}); }, [isAdmin]);
 
   if (error) return <ErrorNote>{error}</ErrorNote>;
   if (!data) return <Loading />;
@@ -76,6 +79,7 @@ export default function SummaryPage({ isAdmin }) {
         <div><dt>{data.self ? 'My allocated pay' : 'Allocated to employees'}</dt><dd>{money(totals.allocated)}</dd></div>
         <div><dt>Paid</dt><dd className="ok-text">{money(totals.paid)}</dd></div>
         <div><dt>Pending</dt><dd className={pending > 0.005 ? 'warn-text' : ''}>{money(pending)}</dd></div>
+        {totals.approved > 0.005 && <div><dt>Approved, not paid</dt><dd>{money(totals.approved)}</dd></div>}
         {!data.self && (
           <div>
             <dt>Not assigned to anyone</dt>
@@ -89,6 +93,8 @@ export default function SummaryPage({ isAdmin }) {
           Open the customer to see which period.
         </p>
       )}
+
+      {data.self && statements.length > 0 && <Statements statements={statements} />}
 
       <div className="seg" role="radiogroup" aria-label="Show">
         {Object.entries(VIEW_LABEL).map(([key, label]) => (
@@ -193,5 +199,50 @@ function EmployeeRows({ employees, columns, by, linkCustomers, cell, rowTotal, c
         );
       })}
     </tbody>
+  );
+}
+
+// An employee's quarterly payout statements: amount, status, the comment written for them, and where
+// the pay came from.
+function Statements({ statements }) {
+  const [open, setOpen] = useState(null);
+  return (
+    <section className="statements">
+      <h2>Quarterly statements</h2>
+      <div className="table-wrap">
+        <table className="grid list">
+          <thead>
+            <tr>
+              <th scope="col">Quarter</th><th scope="col">Pay month</th><th scope="col" className="num">Amount</th>
+              <th scope="col">Status</th><th scope="col">Comment</th>
+            </tr>
+          </thead>
+          <tbody>
+            {statements.map((s) => (
+              <Fragment key={s.id}>
+                <tr>
+                  <th scope="row">
+                    <button type="button" className="drill" aria-expanded={open === s.id} onClick={() => setOpen(open === s.id ? null : s.id)}>
+                      <span className="drill-caret" aria-hidden="true">▸</span>{quarterLabel(s.quarter)} ({monthLabel(s.from)} to {monthLabel(s.to)})
+                    </button>
+                  </th>
+                  <td>{monthLabel(s.pay_month)}</td>
+                  <td className="num strong">{moneyIn(s.amount, s.currency)}</td>
+                  <td>{s.status === 'paid' ? <span className="paid-tag">✓ Paid {dayLabel(s.paid_on)}</span> : payoutStatusLabel[s.status]}</td>
+                  <td className="small">{s.comment || <span className="muted">–</span>}</td>
+                </tr>
+                {open === s.id && s.items.map((it) => (
+                  <tr key={`${s.id}-${it.allocation_id}-${it.part}`} className="drill-row">
+                    <td colSpan={2}>{monthLabel(it.part_month)} · {it.customer} · {it.category}</td>
+                    <td className="num">{moneyIn(it.amount, s.currency)}</td>
+                    <td colSpan={2} />
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

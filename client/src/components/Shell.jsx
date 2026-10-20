@@ -8,6 +8,7 @@ import UsersPage, { roleLabel } from '../pages/UsersPage.jsx';
 import EmployeeDetail from '../pages/EmployeeDetail.jsx';
 import AzureDevOpsPage from '../pages/AzureDevOpsPage.jsx';
 import DeploymentsPage, { CustomerDeployments } from '../pages/Deployments.jsx';
+import PayoutsPage from '../pages/PayoutsPage.jsx';
 
 // Employee logins see only Summary, Employees and All payments, each with just their own data,
 // plus Deployments (customer names only), which anyone can add to.
@@ -16,6 +17,7 @@ const NAV = [
   ['customers', 'Customers', { admin: true }],
   ['employees', 'Employees'],
   ['payments', 'All payments'],
+  ['payouts', 'Payouts', { admin: true }],
   ['deployments', 'Deployments'],
   ['users', 'Users', { admin: true }],
   ['azure-devops', 'Azure DevOps', { admin: true }],
@@ -35,6 +37,7 @@ export default function Shell({ user, onLogout }) {
   else if (section === 'deployments') page = <DeploymentsPage user={user} customerId={id ? Number(id) : null} />;
   else if (section === 'payments') page = <PaymentsPage isAdmin={isAdmin} />;
   else if (section === 'users' && isAdmin) page = <UsersPage me={user} />;
+  else if (section === 'payouts' && isAdmin) page = <PayoutsPage key={id || 'list'} quarter={id || null} user={user} />;
   else page = <SummaryPage isAdmin={isAdmin} />;
 
   return (

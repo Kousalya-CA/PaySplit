@@ -41,6 +41,11 @@ export const parseNum = (text) => {
   return String(text).trim() === '' || !Number.isFinite(n) ? NaN : n;
 };
 
+// '2026-Q4' -> 'Q4 2026'
+export const quarterLabel = (q) => `${q.slice(5)} ${q.slice(0, 4)}`;
+// A quarterly payout line's status in words.
+export const payoutStatusLabel = { submitted: 'Waiting for approval', approved: 'Approved, not paid', paid: 'Paid' };
+
 // '2026-10-06' -> '6 Oct 2026'
 export const dayLabel = (iso) => {
   const [y, m, d] = iso.slice(0, 10).split('-').map(Number);

@@ -32,7 +32,15 @@ It works the same way as the workbook:
    (From to To), and **each month has its own contributors and weightages** (chosen with month tabs on
    the payment page). Each month is marked paid on its own once it has arrived. A revenue share's
    payment type is the default for its payments.
-6. **Summary** shows each employee's pay per month and per year (in the payment date month, or in each
+6. **Payouts** (admins): pay is paid every quarter. Pay for a month belongs to its calendar quarter
+   (Oct to Dec, Jan to Mar, ...) and is paid in the pay month, 1 month after the quarter by default
+   (so Oct to Dec is paid in January). For a quarter, an admin writes a **comment for each employee**
+   and submits it (the amounts are frozen and that pay is locked on the payment pages); a **different
+   admin approves** each employee's line, or all at once, or sends it back with a reason; then the
+   approved lines are marked paid with the payroll date. Pay added later for a quarter that's already
+   paid goes into the next quarter. Employees see their own statements and comments on My pay.
+   Quarterly payouts start with Q4 2026; pay marked paid before that stays as it was.
+7. **Summary** shows each employee's pay per month and per year (in the payment date month, or in each
    part's month for Custom). **All payments** is the
    full log, and you can download it as a CSV file.
 
@@ -164,6 +172,11 @@ periods                  id, customer_id, start_month, amount (customer currency
 part_paid                allocation_id, seq, month, paid_on, paid_amount, paid_by (paid marks on custom payments' months)
 allocations              id, period_id, part (month of a custom payment, or NULL), category, employee_id, weightage, paid_on, paid_amount, paid_by
 payments (view)          every allocation with pay = revenue × category % × weightage, and the amount paid
+payout_settings          key, value (pay_lag, first_quarter)
+payout_runs              id, quarter
+payout_lines             run, employee, currency, amount, comment, status (submitted/approved/paid), who/when, approver_comment, paid_on
+payout_items             line, allocation, part (month), part_month, amount (frozen)
+payout_notes             quarter, employee, comment before submitting, sent_back_reason
 azdo_settings            key, value (Azure DevOps organisation and project)
 azdo_areas               id, path, name, display_name
 azdo_iterations          id, area_id, path, name, start_date, finish_date

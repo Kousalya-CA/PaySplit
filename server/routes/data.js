@@ -95,15 +95,29 @@ const q = {
   // (Rows with a paid mark, or any monthly part paid, are never replaced.)
   clearAllocations: db.prepare(`
     DELETE FROM allocations WHERE period_id = ? AND paid_on IS NULL
-      AND NOT EXISTS (SELECT 1 FROM part_paid pp WHERE pp.allocation_id = allocations.id)`),
+      AND NOT EXISTS (SELECT 1 FROM part_paid pp WHERE pp.allocation_id = allocations.id)
+      AND NOT EXISTS (SELECT 1 FROM payout_items pi WHERE pi.allocation_id = allocations.id)`),
   allocationsForPeriod: db.prepare(`
     SELECT a.*, e.name AS employee,
-      (a.paid_on IS NOT NULL OR EXISTS (SELECT 1 FROM part_paid pp WHERE pp.allocation_id = a.id)) AS locked
+      (a.paid_on IS NOT NULL OR EXISTS (SELECT 1 FROM part_paid pp WHERE pp.allocation_id = a.id)
+        OR EXISTS (SELECT 1 FROM payout_items pi WHERE pi.allocation_id = a.id)) AS locked
     FROM allocations a JOIN employees e ON e.id = a.employee_id WHERE a.period_id = ?`),
   partsPaidForCustomer: db.prepare(`
     SELECT pp.* FROM part_paid pp JOIN allocations a ON a.id = pp.allocation_id JOIN periods p ON p.id = a.period_id
     WHERE p.customer_id = ?`),
   partsOf: db.prepare('SELECT * FROM part_paid WHERE allocation_id = ?'),
+  // Quarterly payouts: each contributor row's line status, and the frozen amounts a change can't alter.
+  payoutForCustomer: db.prepare(`
+    SELECT pi.allocation_id, pi.part, pi.amount, l.status, l.paid_on, r.quarter
+    FROM payout_items pi JOIN payout_lines l ON l.id = pi.line_id JOIN payout_runs r ON r.id = l.run_id
+    JOIN allocations a ON a.id = pi.allocation_id JOIN periods p ON p.id = a.period_id
+    WHERE p.customer_id = ?`),
+  payoutFrozen: db.prepare(`
+    SELECT pi.amount, pi.part_month, x.part_amount, x.part_month AS now_month, e.name AS employee
+    FROM payout_items pi JOIN allocations a ON a.id = pi.allocation_id JOIN periods p ON p.id = a.period_id
+    JOIN employees e ON e.id = a.employee_id
+    LEFT JOIN pay_parts x ON x.id = pi.allocation_id AND x.part = pi.part
+    WHERE p.customer_id = ?`),
   markPart: db.prepare('INSERT INTO part_paid (allocation_id, seq, month, paid_on, paid_amount, paid_by) VALUES (?, ?, ?, ?, ?, ?)'),
   unmarkPart: db.prepare('DELETE FROM part_paid WHERE allocation_id = ? AND seq = ?'),
   // Contributors with a monthly part paid, with their pay and schedule as they work out now.
@@ -158,7 +172,8 @@ const q = {
     SELECT (SELECT COALESCE(SUM(p.revenue), 0) FROM periods p JOIN customers c ON c.id = p.customer_id
               WHERE ${PAY_CURRENCY_SQL} = ?1) AS revenue,
            (SELECT COALESCE(SUM(pay), 0) FROM payments WHERE currency = ?1) AS allocated,
-           (SELECT COALESCE(SUM(part_paid), 0) FROM pay_parts WHERE currency = ?1) AS paid`),
+           (SELECT COALESCE(SUM(part_paid), 0) FROM pay_parts WHERE currency = ?1) AS paid,
+           (SELECT COALESCE(SUM(part_amount), 0) FROM pay_parts WHERE currency = ?1 AND payout_status = 'approved') AS approved`),
 };
 
 // ---------- validation -------------------------------------------------------
@@ -351,6 +366,7 @@ function customerDetail(id) {
   const shares = q.sharesFor.all(id);
   const allocations = q.allocationsForCustomer.all(id);
   const partMarks = q.partsPaidForCustomer.all(id);
+  const payoutRows = q.payoutForCustomer.all(id);
   const periods = q.periodsFor.all(id).map((p) => {
     const share = shareFor(shares, p.start_month);
     const payout = payoutOf(p, share, customer.frequency);
@@ -362,7 +378,10 @@ function customerDetail(id) {
       const pay = monthPool(p.revenue, payout.parts, a.part) * pctFor[a.category] * a.weightage;
       const marks = partMarks.filter((m) => m.allocation_id === a.id);
       const month = a.part != null ? addMonths(payout.part_from, a.part - 1) : payout.pay_month;
-      return { ...a, active: Boolean(a.active), pay, month, locked: Boolean(a.paid_on) || marks.length > 0 };
+      // Its quarterly payout line, if it's in one (Submitted / Approved / Paid).
+      const inPayout = payoutRows.find((x) => x.allocation_id === a.id);
+      const payoutLine = inPayout ? { status: inPayout.status, quarter: inPayout.quarter, paid_on: inPayout.paid_on } : null;
+      return { ...a, active: Boolean(a.active), pay, month, payout: payoutLine, locked: Boolean(a.paid_on) || marks.length > 0 || Boolean(inPayout) };
     });
     // Months the payment covers: the month itself for Monthly; for Yearly and Three Years the year
     // from its payment month (inside its share). start_month is when it's paid.
@@ -398,6 +417,12 @@ function paidSnapshot(customerId) {
   return snap;
 }
 function assertPaidUnchanged(customerId, before) {
+  // Pay in a quarterly payout line is frozen: it must still work out to the same amount and month.
+  for (const r of q.payoutFrozen.all(customerId)) {
+    if (r.part_amount == null || Math.abs(round2(r.part_amount) - r.amount) > 0.005 || r.now_month !== r.part_month) {
+      throw new HttpError(409, `${r.employee}'s pay for ${r.part_month} is in a quarterly payout, so this change would alter it. Send that payout line back first.`);
+    }
+  }
   for (const r of q.paidForCustomer.all(customerId)) {
     const moved = before.has(r.id) && before.get(r.id) !== r.start_month;
     if (moved || r.pay == null || Math.abs(round2(r.pay) - r.paid_amount) > 0.005) {
@@ -605,6 +630,9 @@ export function registerDataRoutes(router) {
     if (paidSnapshot(params.id).size) {
       throw new HttpError(409, `${customer.name} has pay (or monthly parts) marked as paid, so it can't be deleted. Undo the paid marks first.`);
     }
+    if (q.payoutForCustomer.all(params.id).length) {
+      throw new HttpError(409, `${customer.name} has pay in a quarterly payout, so it can't be deleted.`);
+    }
     const { n: deployments } = db.prepare('SELECT COUNT(*) AS n FROM deployments WHERE customer_id = ?').get(params.id);
     if (deployments) {
       throw new HttpError(409, `${customer.name} has ${deployments} deployment${deployments === 1 ? '' : 's'} recorded, so it can't be deleted. Delete them on the Deployments page first.`);
@@ -685,7 +713,7 @@ export function registerDataRoutes(router) {
       for (const p of paidRows) {
         const sent = list.find((a) => a.category === p.category && Number(a.employee_id) === p.employee_id && partOf(a) === p.part);
         if (!sent || !same(Number(sent.weightage), p.weightage)) {
-          throw new HttpError(409, `${p.employee}'s ${p.category} pay is marked as paid (or has monthly parts paid), so it can't be changed or removed. Undo the paid marks first.`);
+          throw new HttpError(409, `${p.employee}'s ${p.category} pay is marked as paid or is in a quarterly payout, so it can't be changed or removed. Undo the paid mark, or send the payout line back, first.`);
         }
       }
     }
