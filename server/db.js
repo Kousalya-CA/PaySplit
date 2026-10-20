@@ -13,6 +13,14 @@ mkdirSync(dirname(dbPath), { recursive: true });
 
 export const db = new DatabaseSync(dbPath);
 
+// Before a table is rebuilt, drop every view (including any left by another version of the app):
+// SQLite won't replace a table that a view still points at. The views are recreated further down.
+function dropAllViews() {
+  for (const { name } of db.prepare("SELECT name FROM sqlite_master WHERE type = 'view'").all()) {
+    db.exec(`DROP VIEW IF EXISTS "${name.replace(/"/g, '""')}"`);
+  }
+}
+
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
@@ -118,6 +126,7 @@ db.exec(`
 // periods (ON DELETE CASCADE) survive, and the view is dropped and recreated below.
 const customersSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'customers'").get().sql;
 if (!customersSql.includes('Three Years')) {
+  dropAllViews();
   db.exec('PRAGMA foreign_keys = OFF');
   try {
     transaction(() => db.exec(`
@@ -284,6 +293,7 @@ for (const [col, type] of [['paid_on', 'TEXT'], ['paid_amount', 'REAL'], ['paid_
 // month. NULL = the whole payment (one time, and every Monthly payment). The table is rebuilt once to
 // add the column, because the "one row per contributor and category" rule has to include it.
 if (!db.prepare('PRAGMA table_info(allocations)').all().some((c) => c.name === 'part')) {
+  dropAllViews();
   db.exec('PRAGMA foreign_keys = OFF');
   try {
     db.exec(`
