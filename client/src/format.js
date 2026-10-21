@@ -46,6 +46,10 @@ export const quarterLabel = (q) => `${q.slice(5)} ${q.slice(0, 4)}`;
 // A quarterly payout line's status in words.
 export const payoutStatusLabel = { submitted: 'Waiting for approval', approved: 'Approved, not paid', paid: 'Paid' };
 
+// Employee ratings on each payment month: 1 is the best.
+export const RATINGS = [[1, 'Exceptional'], [2, 'Exceeds expectation'], [3, 'Meets expectation'], [4, 'Needs Improvement'], [5, 'Unsatisfactory']];
+export const ratingLabel = (n) => (n ? `${n} · ${RATINGS.find(([v]) => v === n)?.[1] || ''}` : 'Not rated');
+
 // '2026-10-06' -> '6 Oct 2026'
 export const dayLabel = (iso) => {
   const [y, m, d] = iso.slice(0, 10).split('-').map(Number);

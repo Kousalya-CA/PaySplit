@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { moneyIn, currencySymbol, monthLabel, quarterLabel, payoutStatusLabel, dayLabel } from '../format.js';
+import { moneyIn, currencySymbol, monthLabel, quarterLabel, payoutStatusLabel, dayLabel, ratingLabel } from '../format.js';
 import { Loading, ErrorNote, Money as MoneyIn } from '../components/common.jsx';
 
 // Same as the "Monthly Summary" sheet: pay per employee per month, then yearly totals.
@@ -231,11 +231,13 @@ function Statements({ statements }) {
                   <td>{s.status === 'paid' ? <span className="paid-tag">✓ Paid {dayLabel(s.paid_on)}</span> : payoutStatusLabel[s.status]}</td>
                   <td className="small">{s.comment || <span className="muted">–</span>}</td>
                 </tr>
+                {/* Ratings and their comments show once the line is approved. */}
                 {open === s.id && s.items.map((it) => (
                   <tr key={`${s.id}-${it.allocation_id}-${it.part}`} className="drill-row">
                     <td colSpan={2}>{monthLabel(it.part_month)} · {it.customer} · {it.category}</td>
                     <td className="num">{moneyIn(it.amount, s.currency)}</td>
-                    <td colSpan={2} />
+                    <td className="small">{it.rating ? ratingLabel(it.rating) : s.status === 'submitted' ? <span className="muted">Rating shown after approval</span> : <span className="muted">–</span>}</td>
+                    <td className="small">{it.rating_comment || ''}</td>
                   </tr>
                 ))}
               </Fragment>

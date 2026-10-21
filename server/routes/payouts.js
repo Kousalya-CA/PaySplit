@@ -7,7 +7,7 @@
 // Employees see their own submitted statements. See payout_* tables in db.js.
 import { db, transaction } from '../db.js';
 import { HttpError } from '../http.js';
-import { isAdmin, myEmployeeId } from './data.js';
+import { isAdmin, myEmployeeId, monthLabel } from './data.js';
 
 const QUARTER_RE = /^\d{4}-Q[1-4]$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -33,8 +33,9 @@ const q = {
   saveSetting: db.prepare('INSERT INTO payout_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value'),
   parts: db.prepare(`
     SELECT id AS allocation_id, part, part_month, part_amount AS amount, currency, employee_id, employee,
-      customer_id, customer, category, start_month, old_paid_on, payout_line_id
+      customer_id, customer, category, start_month, old_paid_on, payout_line_id, period_id, alloc_part, weightage
     FROM pay_parts ORDER BY part_month, customer, employee`),
+  ratings: db.prepare('SELECT period_id, part, employee_id, rating, comment FROM ratings'),
   runs: db.prepare('SELECT * FROM payout_runs'),
   run: db.prepare('SELECT * FROM payout_runs WHERE quarter = ?'),
   insertRun: db.prepare('INSERT INTO payout_runs (quarter) VALUES (?)'),
@@ -46,9 +47,11 @@ const q = {
   insertLine: db.prepare(`
     INSERT INTO payout_lines (run_id, employee_id, currency, amount, comment, submitted_by_id, submitted_by)
     VALUES (?, ?, ?, ?, ?, ?, ?)`),
-  insertItem: db.prepare('INSERT INTO payout_items (line_id, allocation_id, part, part_month, amount) VALUES (?, ?, ?, ?, ?)'),
+  insertItem: db.prepare(`INSERT INTO payout_items (line_id, allocation_id, part, part_month, amount, rating, rating_comment)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`),
   items: db.prepare(`
-    SELECT i.*, c.id AS customer_id, c.name AS customer, a.category, p.start_month
+    SELECT i.*, c.id AS customer_id, c.name AS customer, a.category, a.weightage, p.start_month,
+      p.id AS period_id, a.part AS alloc_part
     FROM payout_items i JOIN allocations a ON a.id = i.allocation_id
     JOIN periods p ON p.id = a.period_id JOIN customers c ON c.id = p.customer_id
     WHERE i.line_id = ? ORDER BY i.part_month, c.name`),
@@ -98,6 +101,7 @@ function state() {
   const waiting = new Set(q.sentBackQuarters.all().map((r) => r.quarter));
   const closed = (qq) => !waiting.has(qq) && (linesBy.get(qq) || []).length > 0 && linesBy.get(qq).every((l) => l.status === 'paid');
   const draft = new Map(); // quarter -> Map('employee|currency' -> group)
+  const ratings = new Map(q.ratings.all().map((r) => [`${r.period_id}|${r.part}|${r.employee_id}`, r]));
   for (const p of q.parts.all()) {
     if (p.old_paid_on || p.payout_line_id || Math.abs(p.amount || 0) < 0.005) continue;
     const own = quarterOf(p.part_month);
@@ -109,7 +113,8 @@ function state() {
     if (!groups.has(key)) groups.set(key, { employee_id: p.employee_id, employee: p.employee, currency: p.currency, amount: 0, items: [] });
     const g = groups.get(key);
     g.amount = round2(g.amount + p.amount);
-    g.items.push({ ...p, carried: own !== qq });
+    const r = ratings.get(`${p.period_id}|${p.alloc_part ?? 0}|${p.employee_id}`);
+    g.items.push({ ...p, carried: own !== qq, rating: r?.rating ?? null, rating_comment: r?.comment ?? null });
   }
   return { cfg, linesBy, draft };
 }
@@ -233,12 +238,23 @@ export function registerPayoutRoutes(router) {
       }
       const groups = [...(state().draft.get(quarter)?.values() || [])];
       if (!groups.length) throw new HttpError(400, 'There\'s nothing to submit in this quarter.');
+      // Every employee needs a rating and comment on every payment month in the quarter first.
+      const missing = new Map();
+      for (const g of groups) {
+        for (const it of g.items) {
+          if (it.rating == null) missing.set(`${it.period_id}|${it.alloc_part ?? 0}|${g.employee_id}`, `${g.employee} (${it.customer}, ${monthLabel(it.part_month)})`);
+        }
+      }
+      if (missing.size) {
+        const list = [...missing.values()];
+        throw new HttpError(400, `Rate every employee before submitting. Not rated yet: ${list.slice(0, 5).join('; ')}${list.length > 5 ? ` and ${list.length - 5} more` : ''}. Add ratings on the payment pages.`);
+      }
       const run = q.run.get(quarter) || { id: Number(q.insertRun.run(quarter).lastInsertRowid) };
       const notes = new Map(q.notes.all(quarter).map((n) => [n.employee_id, n]));
       for (const g of groups) {
         const lineId = Number(q.insertLine.run(run.id, g.employee_id, g.currency, g.amount, notes.get(g.employee_id)?.comment || null,
           user.id, user.name || user.email).lastInsertRowid);
-        for (const it of g.items) q.insertItem.run(lineId, it.allocation_id, it.part, it.part_month, round2(it.amount));
+        for (const it of g.items) q.insertItem.run(lineId, it.allocation_id, it.part, it.part_month, round2(it.amount), it.rating, it.rating_comment);
         q.clearSentBack.run(quarter, g.employee_id);
         q.log.run(quarter, g.employee_id, g.currency, g.amount, 'submitted', notes.get(g.employee_id)?.comment || null, byName(user));
       }
@@ -339,13 +355,16 @@ export function registerPayoutRoutes(router) {
   }, admin);
 
   // An employee's own quarterly statements (submitted, approved or paid), with the comment for them.
+  // Their ratings and rating comments show once the line is approved.
   router.get('/api/my/statements', ({ user }) => {
     const mine = myEmployeeId(user);
     if (!mine) return [];
     const { cfg } = state();
     return q.lines.all().filter((l) => l.employee_id === mine).sort((a, b) => b.quarter.localeCompare(a.quarter)).map((l) => {
       const { approver_comment, approved_by_id, submitted_by_id, ...rest } = l;
-      return { ...rest, ...quarterInfo(l.quarter, cfg.pay_lag), items: q.items.all(l.id), viewer_is_admin: isAdmin(user) };
+      const shown = l.status !== 'submitted';
+      const items = q.items.all(l.id).map((it) => (shown ? it : { ...it, rating: null, rating_comment: null }));
+      return { ...rest, ...quarterInfo(l.quarter, cfg.pay_lag), items, viewer_is_admin: isAdmin(user) };
     });
   });
 }

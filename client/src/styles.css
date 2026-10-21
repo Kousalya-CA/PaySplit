@@ -424,3 +424,33 @@ a.secondary { display: inline-block; text-decoration: none; }
 .payout-bulk { align-items: flex-end; margin: .5rem 0; }
 .payout-items td { padding: .2rem .5rem; }
 .statements { margin: 1rem 0 1.5rem; }
+
+/* Payment wizard: weightages -> ratings & comments -> review */
+.wizard-steps { list-style: none; display: flex; gap: .5rem; flex-wrap: wrap; padding: 0; margin: 1rem 0; }
+.wizard-step {
+  display: flex; align-items: center; gap: .5rem; border: 2px solid var(--line); background: var(--surface); color: var(--ink);
+  border-radius: 2rem; padding: .35rem .9rem .35rem .4rem; font-weight: 700;
+}
+.wizard-step.current { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.wizard-step.current small { color: var(--lilac); }
+.wizard-num { display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--lilac); color: var(--ink); font-size: .85rem; }
+.rating-card, .rating-review { border: 2px solid var(--line); border-radius: .8rem; padding: 1rem 1.25rem; margin: .5rem 0 1rem; max-width: 46rem; }
+.rating-review { max-width: none; }
+.rating-card h3 { margin: .25rem 0; }
+.rating-card-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.rating-card-head p { margin: 0; }
+.rating-dots { display: flex; gap: .35rem; flex-wrap: wrap; }
+.rating-dot { width: .9rem; height: .9rem; padding: 0; border-radius: 50%; border: 2px solid var(--ink); background: transparent; }
+.rating-dot.done { background: var(--green); border-color: var(--green); }
+.rating-dot.current { outline: 2px solid var(--ink); outline-offset: 2px; }
+.rating-options { border: 0; padding: 0; margin: .75rem 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: .4rem; }
+.rating-options legend { font-weight: 700; margin-bottom: .35rem; }
+.rating-option { display: flex; align-items: center; gap: .5rem; border: 2px solid var(--line); border-radius: .5rem; padding: .4rem .6rem; cursor: pointer; }
+.rating-option.chosen { border-color: var(--ink); }
+.rating-option input { width: auto; margin: 0; }
+.rating-comment { display: grid; gap: .3rem; margin-bottom: .5rem; }
+.rating-comment span { font-weight: 700; }
+.rating-comment textarea { width: 100%; }
+.rating-card .link + .link { margin-left: 1rem; }
+.payout-items th { padding: .2rem .5rem; font-size: .8rem; text-align: left; }
+.payout-comment { max-width: 24rem; white-space: pre-wrap; }

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { money, moneyIn, currencySymbol, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel, dayLabel, addMonths, quarterLabel, payoutStatusLabel } from '../format.js';
+import { money, moneyIn, currencySymbol, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel, dayLabel, addMonths, quarterLabel, payoutStatusLabel, RATINGS, ratingLabel } from '../format.js';
 import { ErrorNote } from '../components/common.jsx';
 
 const CATEGORIES = ['Direct', 'Support', 'Others'];
@@ -32,6 +32,24 @@ const fitRows = (rows, n) => {
   for (let k = 1; k <= n; k++) out[k] = rows[k] || copyRows(out[k - 1] || rows[0]);
   return out;
 };
+
+// Ratings per month (same keys as the contributors), then per employee id: { rating, comment, locked }.
+const ratingsFrom = (list) => {
+  const out = {};
+  for (const r of list || []) {
+    out[r.part] ||= {};
+    out[r.part][String(r.employee_id)] = { rating: r.rating, comment: r.comment, locked: r.locked, rated_by: r.rated_by };
+  }
+  return out;
+};
+// The employees in one month's contributors (each once, even if in more than one category).
+const employeesIn = (set) => {
+  const ids = [];
+  for (const cat of CATEGORIES) for (const r of set?.[cat] || []) if (r.employee_id && !ids.includes(r.employee_id)) ids.push(r.employee_id);
+  return ids;
+};
+const isRated = (r) => Boolean(r?.rating && r.comment?.trim());
+const STEPS = [['weights', 'Weightages'], ['ratings', 'Ratings & comments'], ['review', 'Review & save']];
 
 // Today as YYYY-MM-DD in local time, the default paid date.
 const todayIso = () => new Date().toLocaleDateString('en-CA');
@@ -91,6 +109,10 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   const [today, setToday] = useState(null); // { rate, date } or { error }
   const [rowsByPart, setRowsByPart] = useState(() => fitRows(rowsFrom(period.allocations), period.parts || 1));
   const [activePart, setActivePart] = useState(1);
+  // Wizard: 1 weightages, 2 a rating and comment for each employee (one at a time), 3 review.
+  const [step, setStep] = useState('weights');
+  const [ratingsByPart, setRatingsByPart] = useState(() => ratingsFrom(period.ratings));
+  const [ratingAt, setRatingAt] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -106,6 +128,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     setConvert(canConvert && period.fx_rate != null);
     setPayout(payoutFrom(period));
     setRowsByPart(fitRows(rowsFrom(period.allocations), period.parts || 1));
+    setRatingsByPart(ratingsFrom(period.ratings));
   }, [period]);
 
   // Pay is paid through quarterly payouts (the Payouts page). Once anyone in this payment is in a
@@ -203,9 +226,32 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
     setConvert(canConvert && period.fx_rate != null);
     setPayout(payoutFrom(period));
     setRowsByPart(fitRows(rowsFrom(period.allocations), period.parts || 1));
+    setRatingsByPart(ratingsFrom(period.ratings));
     setDirty(false);
     setError('');
   };
+
+  // Ratings for the month shown: each employee in it, one at a time.
+  const ratingIds = employeesIn(rows);
+  const ratingsHere = ratingsByPart[activeKey] || {};
+  const ratedCount = (k) => {
+    const ids = employeesIn(rowsByPart[k]);
+    return [ids.filter((id) => isRated(ratingsByPart[k]?.[id])).length, ids.length];
+  };
+  const setRating = (employeeId, field, value) => change(() => setRatingsByPart((all) => ({
+    ...all, [activeKey]: { ...(all[activeKey] || {}), [employeeId]: { ...(all[activeKey]?.[employeeId] || {}), [field]: value } },
+  })));
+  const nameOf = (id) => employees.find((e) => String(e.id) === id)?.name || 'Employee';
+  // The same employee's rating in the month before (the previous month of a custom payment, or the
+  // previous payment), to copy.
+  const previousRating = (employeeId) => {
+    if (multi && activeKey > 1) return { from: monthLabel(months[activeKey - 2]), r: ratingsByPart[activeKey - 1]?.[employeeId] };
+    if (!prev) return null;
+    const theirs = (prev.ratings || []).filter((r) => String(r.employee_id) === employeeId);
+    const last = theirs.sort((a, b) => b.part - a.part)[0];
+    return last ? { from: monthLabel(prev.start_month), r: last } : null;
+  };
+  const goStep = (s) => { setStep(s); setRatingAt(0); setError(''); };
 
   const save = async () => {
     setError('');
@@ -230,6 +276,18 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
         if (st[cat].sum > 100.01) return setError(`${where}${cat} weightages add up to ${+st[cat].sum.toFixed(2)}%. Reduce them to 100% or less.`);
       }
     }
+    // Ratings are optional here (they're needed before the payout is submitted), but one started
+    // needs both the rating and the comment.
+    const ratings = [];
+    for (const k of keys) {
+      const where = k ? `${monthLabel(months[k - 1])}: ` : '';
+      for (const id of employeesIn(rowsByPart[k])) {
+        const r = ratingsByPart[k]?.[id];
+        if (!r || (!r.rating && !r.comment?.trim())) continue;
+        if (!isRated(r)) return setError(`${where}${nameOf(id)}: choose a rating and add a comment, or clear both.`);
+        ratings.push({ part: k, employee_id: Number(id), rating: r.rating, comment: r.comment.trim() });
+      }
+    }
     setSaving(true);
     try {
       const updated = await api.periods.save(period.id, {
@@ -245,6 +303,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
         pay_from: custom ? payout.from : null,
         pay_to: custom ? payout.to : null,
         allocations,
+        ratings,
       });
       setDirty(false);
       setNotice(`Saved ${label}.`);
@@ -388,6 +447,10 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
                   <span>{monthLabel(m)}</span>
                   <small>{fmt(monthPool(revValue, partCount, k))}</small>
                   <small className={allPaid ? 'ok-text' : count ? '' : 'warn-text'}>{allPaid ? '✓ Paid' : count ? `${count} contributor${count === 1 ? '' : 's'}` : 'No contributors'}</small>
+                  {count > 0 && (() => {
+                    const [done, of] = ratedCount(k);
+                    return <small className={done === of ? 'ok-text' : 'warn-text'}>{done} of {of} rated</small>;
+                  })()}
                 </button>
               );
             })}
@@ -399,6 +462,50 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
         </div>
       )}
 
+      <ol className="wizard-steps" aria-label="Steps">
+        {STEPS.map(([s, name], i) => {
+          const [done, of] = ratedCount(activeKey);
+          return (
+            <li key={s}>
+              <button type="button" className={`wizard-step${step === s ? ' current' : ''}`} aria-current={step === s ? 'step' : undefined} onClick={() => goStep(s)}>
+                <span className="wizard-num" aria-hidden="true">{i + 1}</span>
+                <span>{name}{s === 'ratings' && of > 0 && <small className={done === of ? 'ok-text' : 'warn-text'}> {done} of {of}</small>}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+
+      {step === 'ratings' && (
+        ratingIds.length === 0 ? (
+          <p className="muted">Add contributors{multi ? ` for ${monthLabel(activeMonth)}` : ''} in step 1 first, then rate them here.</p>
+        ) : (
+          <RatingCard
+            key={`${activeKey}-${ratingIds[Math.min(ratingAt, ratingIds.length - 1)]}`}
+            month={multi ? monthLabel(activeMonth) : monthLabel(payout.pay_month || period.start_month)}
+            index={Math.min(ratingAt, ratingIds.length - 1)}
+            ids={ratingIds}
+            ratings={ratingsHere}
+            nameOf={nameOf}
+            rows={rows}
+            stats={stats}
+            fmt={fmt}
+            previous={previousRating}
+            onChange={setRating}
+            onJump={setRatingAt}
+            onBack={() => (ratingAt > 0 ? setRatingAt(ratingAt - 1) : goStep('weights'))}
+            onNext={() => (ratingAt < ratingIds.length - 1 ? setRatingAt(ratingAt + 1) : goStep('review'))}
+            setError={setError}
+          />
+        )
+      )}
+
+      {step === 'review' && (
+        <RatingReview month={multi ? monthLabel(activeMonth) : null} ids={ratingIds} ratings={ratingsHere} nameOf={nameOf}
+          rows={rows} stats={stats} fmt={fmt} onEdit={(i) => { setStep('ratings'); setRatingAt(i); }} onBack={() => goStep('ratings')} />
+      )}
+
+      {step === 'weights' && (
       <div className="categories">
         {CATEGORIES.map((cat) => (
           <CategoryTable
@@ -416,10 +523,16 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
           />
         ))}
       </div>
+      )}
+      {step === 'weights' && ratingIds.length > 0 && (
+        <div className="actions">
+          <button type="button" className="secondary" onClick={() => goStep('ratings')}>Next: ratings & comments ›</button>
+        </div>
+      )}
 
       {multi && (
         <MonthOverview months={months} pools={keys.map((k) => monthPool(revValue, partCount, k))} allocated={keys.map(allocatedFor)}
-          savedIn={savedIn} fmt={fmt} onSelect={(k) => setActivePart(k)} />
+          savedIn={savedIn} rated={keys.map(ratedCount)} fmt={fmt} onSelect={(k) => setActivePart(k)} />
       )}
 
       <div className="period-foot">
@@ -439,7 +552,10 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
             <button className="secondary" onClick={copyPrevious}>Copy contributors from {monthLabel(prev.start_month)}</button>
           )}
         </div>
-        <p className="muted small">Pay is paid through the quarterly payout on the Payouts page (for example Oct to Dec is paid in January).</p>
+        <p className="muted small">
+          Pay is paid through the quarterly payout on the Payouts page (for example Oct to Dec is paid in January).
+          Every employee needs a rating and comment before their pay can be submitted there; you can save weightages first and rate later.
+        </p>
       </div>
     </div>
   );
@@ -540,9 +656,111 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
   );
 }
 
+// Where an employee is in a month: each category with their weightage and pay.
+const rolesOf = (id, rows, stats) => CATEGORIES.flatMap((cat) => (rows[cat] || [])
+  .filter((r) => r.employee_id === id)
+  .map((r) => {
+    const f = fractionOf(r);
+    return { cat, weightage: Number.isFinite(f) ? f : 0, pay: stats[cat].pool * (Number.isFinite(f) ? f : 0) };
+  }));
+const rolesText = (roles, fmt) => roles.map((x) => `${x.cat} ${pct(x.weightage)}`).join(' · ')
+  + ` · ${fmt(roles.reduce((s, x) => s + x.pay, 0))}`;
+
+// Step 2: one employee at a time. A rating (1 Exceptional to 5 Unsatisfactory) and a comment with
+// specific instances; Next needs both. A rating whose pay is in a payout is read-only.
+function RatingCard({ month, index, ids, ratings, nameOf, rows, stats, fmt, previous, onChange, onJump, onBack, onNext, setError }) {
+  const id = ids[index];
+  const r = ratings[id] || {};
+  const locked = Boolean(r.locked);
+  const prevRating = previous(id);
+  const next = () => {
+    if (!locked && !isRated(r)) return setError(`Choose a rating and add a comment for ${nameOf(id)} (or use the dots to skip for now).`);
+    setError('');
+    onNext();
+  };
+  return (
+    <section className="rating-card" aria-label={`Rating for ${nameOf(id)}`}>
+      <div className="rating-card-head">
+        <p className="muted small">{month} · Employee {index + 1} of {ids.length}</p>
+        <div className="rating-dots">
+          {ids.map((x, i) => (
+            <button key={x} type="button" className={`rating-dot${isRated(ratings[x]) ? ' done' : ''}${i === index ? ' current' : ''}`}
+              aria-label={`${nameOf(x)}${isRated(ratings[x]) ? ' (rated)' : ''}`} onClick={() => onJump(i)} />
+          ))}
+        </div>
+      </div>
+      <h3>{nameOf(id)}</h3>
+      <p className="muted small">{rolesText(rolesOf(id, rows, stats), fmt)}</p>
+      {locked && <p className="muted small">🔒 In a quarterly payout, so this rating can't be changed.</p>}
+      <fieldset className="rating-options" disabled={locked}>
+        <legend>Rating</legend>
+        {RATINGS.map(([v, text]) => (
+          <label key={v} className={`rating-option${r.rating === v ? ' chosen' : ''}`}>
+            <input type="radio" name={`rating-${id}`} value={v} checked={r.rating === v} onChange={() => onChange(id, 'rating', v)} />
+            <span><strong>{v}</strong> {text}</span>
+          </label>
+        ))}
+      </fieldset>
+      <label className="rating-comment">
+        <span>Comments</span>
+        <textarea rows={4} maxLength={2000} readOnly={locked} value={r.comment || ''}
+          placeholder="Mention one or more specific instances to justify rating"
+          onChange={(e) => onChange(id, 'comment', e.target.value)} />
+      </label>
+      {!locked && prevRating?.r && isRated(prevRating.r) && (
+        <button type="button" className="link" onClick={() => { onChange(id, 'rating', prevRating.r.rating); onChange(id, 'comment', prevRating.r.comment); }}>
+          Copy from {prevRating.from} ({ratingLabel(prevRating.r.rating)})
+        </button>
+      )}
+      {!locked && (r.rating || r.comment) && (
+        <button type="button" className="link danger" onClick={() => { onChange(id, 'rating', null); onChange(id, 'comment', ''); }}>Clear</button>
+      )}
+      <div className="actions">
+        <button type="button" className="secondary" onClick={onBack}>‹ Back</button>
+        <button type="button" className="primary" onClick={next}>{index < ids.length - 1 ? 'Next ›' : 'Next: review ›'}</button>
+      </div>
+    </section>
+  );
+}
+
+// Step 3: the month's weightages with each rating and comment, before saving.
+function RatingReview({ month, ids, ratings, nameOf, rows, stats, fmt, onEdit, onBack }) {
+  if (!ids.length) return <p className="muted">No contributors to review yet.</p>;
+  return (
+    <section className="rating-review">
+      <h3>Review{month ? ` ${month}` : ''}</h3>
+      <div className="table-wrap">
+        <table className="grid list">
+          <thead>
+            <tr><th scope="col">Employee</th><th scope="col">Weightage and pay</th><th scope="col">Rating</th><th scope="col">Comment</th><th><span className="sr-only">Edit</span></th></tr>
+          </thead>
+          <tbody>
+            {ids.map((id, i) => {
+              const r = ratings[id];
+              return (
+                <tr key={id}>
+                  <th scope="row">{nameOf(id)}</th>
+                  <td className="small">{rolesText(rolesOf(id, rows, stats), fmt)}</td>
+                  <td className={isRated(r) ? '' : 'warn-text'}>{isRated(r) ? ratingLabel(r.rating) : 'Not rated'}</td>
+                  <td className="small">{r?.comment || <span className="muted">–</span>}</td>
+                  <td><button type="button" className="link" onClick={() => onEdit(i)}>{r?.locked ? 'View' : 'Edit'}</button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="actions">
+        <button type="button" className="secondary" onClick={onBack}>‹ Back</button>
+        <span className="muted small">Save period below to keep these.</span>
+      </div>
+    </section>
+  );
+}
+
 // A custom payment's months at a glance: each month's part of the employees' share, how much is
-// assigned, and how many are paid. Clicking a month opens its weightages.
-function MonthOverview({ months, pools, allocated, savedIn, fmt, onSelect }) {
+// assigned, how many are rated and paid. Clicking a month opens its weightages.
+function MonthOverview({ months, pools, allocated, savedIn, rated, fmt, onSelect }) {
   return (
     <section className="monthly-split">
       <div className="monthly-split-head">
@@ -556,6 +774,7 @@ function MonthOverview({ months, pools, allocated, savedIn, fmt, onSelect }) {
               <th scope="col">Month</th>
               <th scope="col" className="num">Employees' share</th>
               <th scope="col" className="num">Assigned</th>
+              <th scope="col">Rated</th>
               <th scope="col">Paid</th>
             </tr>
           </thead>
@@ -568,6 +787,9 @@ function MonthOverview({ months, pools, allocated, savedIn, fmt, onSelect }) {
                   <th scope="row"><button type="button" className="link" onClick={() => onSelect(i + 1)}>{monthLabel(m)}</button></th>
                   <td className="num">{fmt(pools[i])}</td>
                   <td className={`num ${Math.abs(pools[i] - allocated[i]) > 0.005 ? 'warn-text' : ''}`}>{fmt(allocated[i])}</td>
+                  <td className={`small ${rated[i][0] === rated[i][1] ? (rated[i][1] ? 'ok-text' : 'muted') : 'warn-text'}`}>
+                    {rated[i][1] ? `${rated[i][0]} of ${rated[i][1]}` : '–'}
+                  </td>
                   <td>{saved.length === 0 ? <span className="muted small">No contributors saved</span>
                     : paidCount === saved.length ? <span className="paid-tag">✓ All {saved.length} paid</span>
                       : <span className="muted small">{paidCount} of {saved.length} paid</span>}</td>

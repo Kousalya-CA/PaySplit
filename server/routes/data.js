@@ -149,6 +149,12 @@ const q = {
     JOIN employees e ON e.id = a.employee_id
     LEFT JOIN payments x ON x.id = a.id
     WHERE p.customer_id = ? AND a.paid_on IS NOT NULL`),
+  ratingsForCustomer: db.prepare(`
+    SELECT r.* FROM ratings r JOIN periods p ON p.id = r.period_id WHERE p.customer_id = ? ORDER BY r.period_id, r.part`),
+  ratingsForPeriod: db.prepare('SELECT * FROM ratings WHERE period_id = ?'),
+  clearRatings: db.prepare('DELETE FROM ratings WHERE period_id = ?'),
+  insertRating: db.prepare(`
+    INSERT INTO ratings (period_id, part, employee_id, rating, comment, rated_by, rated_at) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`),
   insertAllocation: db.prepare(`
     INSERT INTO allocations (period_id, part, category, employee_id, weightage) VALUES (?, ?, ?, ?, ?)`),
 
@@ -205,7 +211,7 @@ function employeeUniqueError(err, name, email, code) {
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const monthLabel = (ym) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+export const monthLabel = (ym) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
 
 function parseSplit(src, name) {
   const pcts = {
@@ -367,6 +373,7 @@ function customerDetail(id) {
   const allocations = q.allocationsForCustomer.all(id);
   const partMarks = q.partsPaidForCustomer.all(id);
   const payoutRows = q.payoutForCustomer.all(id);
+  const ratings = q.ratingsForCustomer.all(id);
   const periods = q.periodsFor.all(id).map((p) => {
     const share = shareFor(shares, p.start_month);
     const payout = payoutOf(p, share, customer.frequency);
@@ -390,7 +397,11 @@ function customerDetail(id) {
     let end_month = monthly ? p.start_month : addMonths(p.start_month, 11);
     if (!monthly && share?.to_month && end_month > share.to_month) end_month = share.to_month;
     const currency = p.fx_rate != null && customer.currency !== 'INR' ? 'INR' : customer.currency;
-    return { ...p, ...payout, currency, cover_from, end_month, share, allocations: rows, paid: rows.reduce((s, r) => s + r.pay, 0) };
+    // Each employee's rating for each month (part 0 = the whole payment); locked once their pay is in a payout.
+    const rated = ratings.filter((r) => r.period_id === p.id).map((r) => ({
+      ...r, locked: rows.some((a) => a.locked && a.employee_id === r.employee_id && (a.part ?? 0) === r.part),
+    }));
+    return { ...p, ...payout, currency, cover_from, end_month, share, allocations: rows, ratings: rated, paid: rows.reduce((s, r) => s + r.pay, 0) };
   });
   return { ...customer, shares, periods };
 }
@@ -664,7 +675,7 @@ export function registerDataRoutes(router) {
 
   // Periods are created and removed by the customer's revenue shares (saveShares).
   // Save a period: revenue plus the full list of contributors (replaces the old list).
-  router.put('/api/periods/:id', ({ params, body }) => {
+  router.put('/api/periods/:id', ({ params, body, user }) => {
     const period = q.period.get(params.id);
     if (!period) throw new HttpError(404, 'Period not found.');
     // Revenue is entered in the customer's currency; share_pct of it is the employees' pool. With
@@ -742,12 +753,53 @@ export function registerDataRoutes(router) {
       }
     }
 
+    // Ratings (optional): one per employee in each month (part 0 = the whole payment), 1 to 5 with a
+    // comment. A rating whose pay is in a payout (or paid) is locked and kept as it is.
+    const lockedKey = new Set(paidRows.map((a) => `${a.part ?? 0}|${a.employee_id}`));
+    const oldRatings = new Map(q.ratingsForPeriod.all(params.id).map((r) => [`${r.part}|${r.employee_id}`, r]));
+    const ratingList = Array.isArray(body.ratings) ? body.ratings : [];
+    const seenRating = new Set();
+    const ratings = ratingList.map((r) => {
+      const part = nParts > 1 ? Number(r.part) : 0;
+      const employee = q.employee.get(Number(r.employee_id));
+      if (!employee) throw new HttpError(400, 'A rating is for an employee who doesn\'t exist. Reload the page.');
+      const where = monthName(part || null);
+      const key = `${part}|${employee.id}`;
+      if (!rows.some((a) => (a.part ?? 0) === part && a.employee_id === employee.id)) {
+        throw new HttpError(400, `${where}${employee.name} is rated but isn't a contributor in that month.`);
+      }
+      if (seenRating.has(key)) throw new HttpError(400, `${where}${employee.name} is rated twice.`);
+      seenRating.add(key);
+      const rating = Number(r.rating);
+      if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new HttpError(400, `${where}${employee.name}'s rating must be 1 to 5.`);
+      const comment = String(r.comment ?? '').trim();
+      if (!comment) throw new HttpError(400, `${where}Add a comment for ${employee.name}'s rating, with one or more specific instances.`);
+      if (comment.length > 2000) throw new HttpError(400, `${where}Keep ${employee.name}'s comment to 2000 characters or fewer.`);
+      return { part, employee_id: employee.id, rating, comment, name: employee.name, where };
+    });
+    for (const key of lockedKey) {
+      const old = oldRatings.get(key);
+      const sent = ratings.find((r) => `${r.part}|${r.employee_id}` === key);
+      if (old ? !sent || sent.rating !== old.rating || sent.comment !== old.comment : sent) {
+        const name = sent?.name || q.employee.get(Number(key.split('|')[1]))?.name || 'This employee';
+        throw new HttpError(409, `${sent?.where || ''}${name}'s pay is in a quarterly payout (or paid), so their rating and comment can't be changed. Undo the payout line on the Payouts page first.`);
+      }
+    }
+
     transaction(() => {
       q.updatePeriod.run(revenue, usd.total, usd.pct, usd.rate, payMonth, payoutType, payFrom, payTo, params.id);
       q.clearAllocations.run(params.id);
       for (const r of rows) {
         if (paidRows.some((p) => p.category === r.category && p.employee_id === r.employee_id && p.part === r.part)) continue;
         q.insertAllocation.run(params.id, r.part, r.category, r.employee_id, r.weightage);
+      }
+      // Unchanged ratings keep who rated them and when.
+      q.clearRatings.run(params.id);
+      for (const r of ratings) {
+        const old = oldRatings.get(`${r.part}|${r.employee_id}`);
+        const same = old && old.rating === r.rating && old.comment === r.comment;
+        q.insertRating.run(params.id, r.part, r.employee_id, r.rating, r.comment,
+          same ? old.rated_by : user?.name || user?.email || null, same ? old.rated_at : null);
       }
     });
     return customerDetail(period.customer_id);

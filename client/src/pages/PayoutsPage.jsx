@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { moneyIn, monthLabel, dayLabel, quarterLabel, payoutStatusLabel } from '../format.js';
+import { moneyIn, monthLabel, dayLabel, quarterLabel, payoutStatusLabel, ratingLabel, pct } from '../format.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 
 // Quarterly payouts (admins). Pay for a month belongs to its calendar quarter and is paid in the pay
@@ -13,7 +13,25 @@ export default function PayoutsPage({ quarter, user }) {
 }
 
 const historyLabel = { submitted: 'Submitted', approved: 'Approved', undo_approve: 'Approval undone', undo_submit: 'Submission undone', paid: 'Paid' };
-const todayIso = () =>new Date().toLocaleDateString('en-CA');
+// A line's breakdown grouped by payment month: each customer once, with the employee's categories
+// and weightages, the amount, and their rating and comment.
+const byPayment = (items) => {
+  const out = new Map();
+  for (const it of items) {
+    const key = `${it.period_id}|${it.alloc_part ?? 0}|${it.part_month}`;
+    if (!out.has(key)) out.set(key, { key, customer_id: it.customer_id, customer: it.customer, month: it.part_month, roles: [], amount: 0, rating: it.rating, comment: it.rating_comment, carried: it.carried });
+    const g = out.get(key);
+    g.roles.push(`${it.category} ${pct(it.weightage)}`);
+    g.amount += it.amount;
+  }
+  return [...out.values()];
+};
+const unratedCount = (items) => byPayment(items).filter((g) => g.rating == null).length;
+const avgRating = (items) => {
+  const rated = byPayment(items).filter((g) => g.rating != null);
+  return rated.length ? (rated.reduce((s, g) => s + g.rating, 0) / rated.length).toFixed(1) : null;
+};
+const todayIso = () => new Date().toLocaleDateString('en-CA');
 const moneyList = (list) => (list.length ? list.map((x) => moneyIn(x.amount, x.currency)).join(' · ') : '–');
 
 function PayoutList() {
@@ -155,14 +173,18 @@ function QuarterPayout({ quarter, user }) {
     <tr className="drill-row">
       <td colSpan={colSpan}>
         <table className="alloc payout-items">
+          <thead>
+            <tr><th scope="col">Month</th><th scope="col">Customer</th><th scope="col">Weightage</th><th scope="col" className="num">Amount</th><th scope="col">Rating</th><th scope="col">Comment</th></tr>
+          </thead>
           <tbody>
-            {items.map((it) => (
-              <tr key={`${it.allocation_id}-${it.part}`}>
-                <td>{monthLabel(it.part_month)}</td>
-                <td><a href={`#/customers/${it.customer_id}`}>{it.customer}</a></td>
-                <td>{it.category}</td>
-                <td className="num">{moneyIn(it.amount, currency)}</td>
-                <td>{it.carried && <span className="tag">Carried over</span>}</td>
+            {byPayment(items).map((g) => (
+              <tr key={g.key}>
+                <td>{monthLabel(g.month)}{g.carried && <span className="tag">Carried over</span>}</td>
+                <td><a href={`#/customers/${g.customer_id}`}>{g.customer}</a></td>
+                <td className="small">{g.roles.join(' · ')}</td>
+                <td className="num">{moneyIn(g.amount, currency)}</td>
+                <td className={g.rating == null ? 'warn-text small' : 'small'}>{ratingLabel(g.rating)}</td>
+                <td className="small payout-comment">{g.comment || <span className="muted">–</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -170,6 +192,18 @@ function QuarterPayout({ quarter, user }) {
       </td>
     </tr>
   );
+  const ratingSummary = (items) => {
+    const avg = avgRating(items);
+    const missing = unratedCount(items);
+    const n = byPayment(items).length;
+    return (
+      <div className="small">
+        <span className="muted">{n} payment month{n === 1 ? '' : 's'}{avg ? ` · avg rating ${avg}` : ''}</span>
+        {missing > 0 && <span className="warn-text"> · {missing} not rated</span>}
+      </div>
+    );
+  };
+  const unratedDraft = data.draft.reduce((s, g) => s + unratedCount(g.items), 0);
 
   return (
     <section>
@@ -205,6 +239,7 @@ function QuarterPayout({ quarter, user }) {
                           <button type="button" className="drill" aria-expanded={open.has(key)} onClick={() => toggle(key)}>
                             <span className="drill-caret" aria-hidden="true">▸</span>{g.employee}
                           </button>
+                          {ratingSummary(g.items)}
                           {g.sent_back_reason && <div className="warn-text small">Submission undone by {g.sent_back_by}: {g.sent_back_reason}</div>}
                         </th>
                         <td className="num strong">{moneyIn(g.amount, g.currency)}</td>
@@ -226,12 +261,19 @@ function QuarterPayout({ quarter, user }) {
             </table>
           </div>
           <div className="actions">
-            <button className="primary" disabled={busy !== ''}
+            <button className="primary" disabled={busy !== '' || unratedDraft > 0}
+              title={unratedDraft > 0 ? 'Rate every employee on the payment pages first' : undefined}
               onClick={() => act('submit', () => api.payouts.submit(quarter, comments), `Submitted ${data.draft.length} for approval.`)}>
               {busy === 'submit' ? 'Submitting…' : `Submit ${data.draft.length} for approval`}
             </button>
           </div>
-          <p className="muted small">Submitting freezes these amounts; the pay in them can't be changed on the payment pages unless the submission is undone.</p>
+          {unratedDraft > 0 && (
+            <p className="warn-text small">
+              {unratedDraft} payment month{unratedDraft === 1 ? ' is' : 's are'} not rated yet. Open an employee above to see which, then add the rating and
+              comment on that customer's payment (step 2, Ratings & comments). Submit is available once everyone is rated.
+            </p>
+          )}
+          <p className="muted small">Submitting freezes these amounts, ratings and comments; the pay in them can't be changed on the payment pages unless the submission is undone.</p>
         </>
       )}
 
@@ -279,6 +321,7 @@ function QuarterPayout({ quarter, user }) {
                           <button type="button" className="drill" aria-expanded={open.has(key)} onClick={() => toggle(key)}>
                             <span className="drill-caret" aria-hidden="true">▸</span>{l.employee}
                           </button>
+                          {ratingSummary(l.items)}
                         </th>
                         <td className="num strong">{moneyIn(l.amount, l.currency)}</td>
                         <td className="small">{l.comment || <span className="muted">–</span>}</td>

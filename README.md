@@ -32,6 +32,12 @@ It works the same way as the workbook:
    (From to To), and **each month has its own contributors and weightages** (chosen with month tabs on
    the payment page). Each month is marked paid on its own once it has arrived. A revenue share's
    payment type is the default for its payments.
+   The payment page is a 3-step wizard: **1 Weightages**, **2 Ratings & comments** (one employee at a
+   time: a rating from 1 Exceptional, 2 Exceeds expectation, 3 Meets expectation, 4 Needs Improvement
+   to 5 Unsatisfactory, and a comment with specific instances; "Copy from" reuses last month's), and
+   **3 Review & save**. Each employee is rated on each customer's payment, for each month of it.
+   Ratings are optional when saving, but every employee must be rated before their pay can be
+   submitted in a quarterly payout. Only admins (including the owner) rate.
 6. **Payouts** (admins): pay is paid every quarter. Pay for a month belongs to its calendar quarter
    (Oct to Dec, Jan to Mar, ...) and is paid in the pay month, 1 month after the quarter by default
    (so Oct to Dec is paid in January). For a quarter, an admin writes a **comment for each employee**
@@ -40,7 +46,9 @@ It works the same way as the workbook:
    approved lines are marked paid with the payroll date. Until paid, an approval can be undone (the line
    waits for approval again) and a submission undone (its pay is back in To submit), each with a comment;
    the quarter's **History** shows every step, who did it and the comment. Pay added later for a quarter that's already
-   paid goes into the next quarter. Employees see their own statements and comments on My pay.
+   paid goes into the next quarter. Employees see their own statements and comments on My pay, and
+   their ratings and rating comments once the line is approved. Opening an employee on the Payouts page
+   shows each customer with the weightage, amount, rating and comment; submitting freezes the ratings.
    Quarterly payouts start with Q4 2026; pay marked paid before that stays as it was.
 7. **Summary** shows each employee's pay per month and per year (in the payment date month, or in each
    part's month for Custom). **All payments** is the
@@ -177,8 +185,9 @@ payments (view)          every allocation with pay = revenue × category % × we
 payout_settings          key, value (pay_lag, first_quarter)
 payout_runs              id, quarter
 payout_lines             run, employee, currency, amount, comment, status (submitted/approved/paid), who/when, approver_comment, paid_on
-payout_items             line, allocation, part (month), part_month, amount (frozen)
+payout_items             line, allocation, part (month), part_month, amount, rating, rating_comment (frozen)
 payout_notes             quarter, employee, comment before submitting, sent_back_reason (undo-submit comment)
+ratings                  period, part (0 = whole payment, else the month), employee, rating (1-5), comment, rated_by, rated_at
 payout_log               quarter, employee, currency, amount, action (submitted/approved/undo_approve/undo_submit/paid), comment, by, at
 azdo_settings            key, value (Azure DevOps organisation and project)
 azdo_areas               id, path, name, display_name

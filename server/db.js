@@ -396,6 +396,28 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_payout_log_quarter ON payout_log(quarter);
 `);
 
+// Ratings: an admin rates each employee on each payment, for each month of it (part 0 = the whole
+// payment, else the month of a custom payment), 1 Exceptional to 5 Unsatisfactory, with a comment
+// giving specific instances. Optional when saving a payment; needed before its pay can be submitted
+// in a payout, where the rating is frozen on payout_items with the amount.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ratings (
+    period_id   INTEGER NOT NULL REFERENCES periods(id) ON DELETE CASCADE,
+    part        INTEGER NOT NULL DEFAULT 0,
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment     TEXT NOT NULL,
+    rated_by    TEXT,
+    rated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (period_id, part, employee_id)
+  );
+`);
+{
+  const itemCols = new Set(db.prepare('PRAGMA table_info(payout_items)').all().map((c) => c.name));
+  if (!itemCols.has('rating')) db.exec('ALTER TABLE payout_items ADD COLUMN rating INTEGER');
+  if (!itemCols.has('rating_comment')) db.exec('ALTER TABLE payout_items ADD COLUMN rating_comment TEXT');
+}
+
 // The payments views. payment_base has one row per contributor with its share's category % and the
 // payout (payment date, and for custom payments the months: the payment's own, else the share's moved
 // along to this payment, else 12 months from the payment month). Monthly payments are always one
