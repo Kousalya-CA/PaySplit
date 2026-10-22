@@ -1,7 +1,8 @@
 // Quarterly payouts: pay for a month belongs to its calendar quarter and is paid in that quarter's
 // payout, in the pay month (N months after the quarter ends). An admin writes a comment for each
-// employee and submits the quarter (amounts are frozen); a different admin approves each employee's
-// line (or all at once); then lines are marked paid with the payroll date. Until paid, an approval can
+// employee and submits the quarter (amounts are frozen); other admins approve each employee's line
+// (or all at once): 0, 1 or 2 approvals as set ('approvals_required'), never by the admin who
+// submitted it; then lines are marked paid with the payroll date. Until paid, an approval can
 // be undone (back to submitted) and a submission undone (back to "to submit"), each with a comment.
 // Every step is written to payout_log with its comment.
 // Employees see their own submitted statements. See payout_* tables in db.js.
@@ -57,9 +58,14 @@ const q = {
     WHERE i.line_id = ? ORDER BY i.part_month, c.name`),
   approve: db.prepare(`UPDATE payout_lines SET status = 'approved', approved_by_id = ?, approved_by = ?, approved_at = datetime('now'),
     approver_comment = ? WHERE id = ? AND status = 'submitted'`),
+  approvals: db.prepare('SELECT * FROM payout_approvals WHERE line_id = ? ORDER BY at, rowid'),
+  addApproval: db.prepare('INSERT INTO payout_approvals (line_id, admin_id, by_name, comment) VALUES (?, ?, ?, ?)'),
+  clearApprovals: db.prepare('DELETE FROM payout_approvals WHERE line_id = ?'),
+  submittedLines: db.prepare(`SELECT l.*, r.quarter, e.name AS employee FROM payout_lines l JOIN payout_runs r ON r.id = l.run_id
+    JOIN employees e ON e.id = l.employee_id WHERE l.status = 'submitted'`),
   paid: db.prepare("UPDATE payout_lines SET status = 'paid', paid_on = ?, paid_by = ? WHERE id = ? AND status = 'approved'"),
   unapprove: db.prepare(`UPDATE payout_lines SET status = 'submitted', approved_by_id = NULL, approved_by = NULL, approved_at = NULL,
-    approver_comment = NULL WHERE id = ? AND status = 'approved'`),
+    approver_comment = NULL WHERE id = ? AND status IN ('submitted', 'approved')`),
   deleteLine: db.prepare('DELETE FROM payout_lines WHERE id = ?'),
   log: db.prepare('INSERT INTO payout_log (quarter, employee_id, currency, amount, action, comment, by_name) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   history: db.prepare(`SELECT g.*, e.name AS employee FROM payout_log g JOIN employees e ON e.id = g.employee_id
@@ -80,7 +86,12 @@ const q = {
 
 function settings() {
   const v = Object.fromEntries(q.settings.all().map((r) => [r.key, r.value]));
-  return { pay_lag: Number(v.pay_lag ?? 1), first_quarter: QUARTER_RE.test(v.first_quarter) ? v.first_quarter : '2026-Q4' };
+  const required = Number(v.approvals_required ?? 1);
+  return {
+    pay_lag: Number(v.pay_lag ?? 1),
+    first_quarter: QUARTER_RE.test(v.first_quarter) ? v.first_quarter : '2026-Q4',
+    approvals_required: [0, 1, 2].includes(required) ? required : 1,
+  };
 }
 const quarterInfo = (quarter, lag) => {
   const { from, to } = quarterMonths(quarter);
@@ -148,10 +159,45 @@ function requireLine(id) {
   if (!line) throw new HttpError(404, 'That payout line wasn\'t found. Reload the page.');
   return line;
 }
-// Four-eyes: a line is approved by an admin other than the one who submitted it.
-function assertCanApprove(line, user) {
-  if (q.adminCount.get().n < 2) throw new HttpError(409, 'Approving needs a second admin: the admin who submits can\'t approve. Add another admin on the Users page.');
-  if (line.submitted_by_id === user.id) throw new HttpError(403, `You submitted ${line.employee}'s line, so another admin has to approve it.`);
+// A line needs 'approvals_required' approvals (0, 1 or 2), each from a different admin who isn't the
+// one who submitted it. With 0, it's approved when it's submitted (or by any admin's Approve).
+const approvalsNeeded = () => settings().approvals_required;
+const tooFewAdmins = (needed) => new HttpError(409, `Each line needs ${needed} approval${needed === 1 ? '' : 's'} from admins other than the one who submits, so there have to be at least ${needed + 1} admins. Add another admin on the Users page, or lower the approvals needed on the Payouts page.`);
+// Why this admin can't approve this line, or null if they can.
+function cantApprove(line, user, needed, approvals) {
+  if (line.status !== 'submitted') return `${line.employee}'s line is already ${line.status}.`;
+  if (needed === 0) return null;
+  if (line.submitted_by_id === user.id) return `You submitted ${line.employee}'s line, so other admins have to approve it.`;
+  if (approvals.some((a) => a.admin_id === user.id)) return `You've already approved ${line.employee}'s line; it needs another admin's approval.`;
+  return null;
+}
+// Add this admin's approval; the line is approved once it has enough.
+function addApproval(line, user, comment, needed) {
+  const approvals = q.approvals.all(line.id);
+  if (needed > 0) {
+    q.addApproval.run(line.id, user.id, byName(user), comment);
+    approvals.push({ admin_id: user.id, by_name: byName(user), comment });
+  }
+  if (approvals.length >= needed) {
+    q.approve.run(user.id, needed === 0 ? byName(user) : approvals.map((a) => a.by_name).join(', '), comment, line.id);
+    logLine(line, 'approved', comment || (needed === 0 ? 'No approval needed' : null), user);
+  } else {
+    logLine(line, 'approval', [`Approval ${approvals.length} of ${needed}`, comment].filter(Boolean).join(': '), user);
+  }
+}
+// After the approvals needed is lowered, waiting lines that already have enough are approved.
+function approveReady(user) {
+  const needed = approvalsNeeded();
+  let n = 0;
+  for (const line of q.submittedLines.all()) {
+    const approvals = q.approvals.all(line.id);
+    if (needed > 0 && approvals.length < needed) continue;
+    const by = needed === 0 ? byName(user) : approvals.map((a) => a.by_name).join(', ');
+    q.approve.run(approvals.at(-1)?.admin_id ?? user.id, by, null, line.id);
+    logLine(line, 'approved', `Approvals needed changed to ${needed}`, user);
+    n += 1;
+  }
+  return n;
 }
 const withItems = (l) => ({ ...l, items: q.items.all(l.id) });
 // A quarter's status from its lines and the pay not submitted yet.
@@ -201,6 +247,8 @@ export function registerPayoutRoutes(router) {
     const notes = new Map(q.notes.all(quarter).map((n) => [n.employee_id, n]));
     const admins = q.admins.all().map((a) => ({ ...a, is_owner: !!a.is_owner, invited: !!a.invited }));
     const adminCount = admins.length;
+    const needed = cfg.approvals_required;
+    const enoughAdmins = needed === 0 || adminCount > needed;
     return {
       ...quarterInfo(quarter, cfg.pay_lag),
       running: thisMonth() <= quarterMonths(quarter).to,
@@ -209,12 +257,18 @@ export function registerPayoutRoutes(router) {
         const note = notes.get(g.employee_id);
         return { ...g, comment: note?.comment || '', sent_back_reason: note?.sent_back_reason || null, sent_back_by: note?.sent_back_by || null };
       }),
-      lines: (linesBy.get(quarter) || []).map((l) => ({
-        ...withItems(l),
-        can_approve: l.status === 'submitted' && adminCount >= 2 && l.submitted_by_id !== user.id,
-        // Four-eyes: any admin except the one who submitted the line.
-        approvers: adminCount >= 2 ? admins.filter((a) => a.id !== l.submitted_by_id).map((a) => a.name) : [],
-      })),
+      lines: (linesBy.get(quarter) || []).map((l) => {
+        const approvals = q.approvals.all(l.id);
+        return {
+          ...withItems(l),
+          approvals,
+          can_approve: enoughAdmins && !cantApprove(l, user, needed, approvals),
+          // Who can still approve: any admin except the submitter and those who already approved.
+          approvers: l.status === 'submitted' && enoughAdmins
+            ? admins.filter((a) => needed === 0 || (a.id !== l.submitted_by_id && !approvals.some((x) => x.admin_id === a.id))).map((a) => a.name)
+            : [],
+        };
+      }),
       admin_count: adminCount,
       admins,
       history: q.history.all(quarter),
@@ -235,6 +289,7 @@ export function registerPayoutRoutes(router) {
   router.post('/api/payouts/:quarter/submit', ({ params, body, user }) => {
     const quarter = requireQuarter(params.quarter);
     const comments = body?.comments && typeof body.comments === 'object' ? body.comments : {};
+    const needed = approvalsNeeded();
     transaction(() => {
       for (const [employeeId, text] of Object.entries(comments)) {
         const comment = String(text ?? '').trim();
@@ -262,6 +317,7 @@ export function registerPayoutRoutes(router) {
         for (const it of g.items) q.insertItem.run(lineId, it.allocation_id, it.part, it.part_month, round2(it.amount), it.rating, it.rating_comment);
         q.clearSentBack.run(quarter, g.employee_id);
         q.log.run(quarter, g.employee_id, g.currency, g.amount, 'submitted', notes.get(g.employee_id)?.comment || null, byName(user));
+        if (needed === 0) addApproval(requireLine(lineId), user, null, 0);
       }
     });
     return { ok: true };
@@ -269,40 +325,40 @@ export function registerPayoutRoutes(router) {
 
   router.post('/api/payout-lines/:id/approve', ({ params, body, user }) => {
     const line = requireLine(params.id);
-    if (line.status !== 'submitted') throw new HttpError(409, `${line.employee}'s line is already ${line.status}.`);
-    assertCanApprove(line, user);
+    const needed = approvalsNeeded();
+    if (line.status === 'submitted' && needed > 0 && q.adminCount.get().n <= needed) throw tooFewAdmins(needed);
+    const why = cantApprove(line, user, needed, q.approvals.all(line.id));
+    if (why) throw new HttpError(line.status === 'submitted' ? 403 : 409, why);
     const comment = String(body?.comment ?? '').trim() || null;
-    transaction(() => {
-      q.approve.run(user.id, byName(user), comment, line.id);
-      logLine(line, 'approved', comment, user);
-    });
-    return { ok: true };
+    if (comment && comment.length > 2000) throw new HttpError(400, 'Keep the comment to 2000 characters or fewer.');
+    transaction(() => addApproval(line, user, comment, needed));
+    return { ok: true, status: requireLine(line.id).status };
   }, admin);
 
-  // Approve every submitted line this admin didn't submit.
+  // Add this admin's approval to every waiting line they can approve (not their own, not approved by them yet).
   router.post('/api/payouts/:quarter/approve-all', ({ params, user }) => {
     const quarter = requireQuarter(params.quarter);
     const lines = (state().linesBy.get(quarter) || []).filter((l) => l.status === 'submitted');
     if (!lines.length) throw new HttpError(400, 'No lines are waiting for approval.');
-    if (q.adminCount.get().n < 2) throw new HttpError(409, 'Approving needs a second admin: the admin who submits can\'t approve. Add another admin on the Users page.');
-    const mine = lines.filter((l) => l.submitted_by_id !== user.id);
-    if (!mine.length) throw new HttpError(403, 'You submitted every waiting line, so another admin has to approve them.');
-    transaction(() => {
-      for (const l of mine) {
-        q.approve.run(user.id, byName(user), null, l.id);
-        logLine(l, 'approved', 'Approve all', user);
-      }
-    });
-    return { ok: true, approved: mine.length, skipped: lines.length - mine.length };
+    const needed = approvalsNeeded();
+    if (needed > 0 && q.adminCount.get().n <= needed) throw tooFewAdmins(needed);
+    const mine = lines.filter((l) => !cantApprove(l, user, needed, q.approvals.all(l.id)));
+    if (!mine.length) throw new HttpError(403, 'You submitted or already approved every waiting line, so other admins have to approve them.');
+    transaction(() => { for (const l of mine) addApproval(l, user, 'Approve all', needed); });
+    const done = mine.filter((l) => requireLine(l.id).status === 'approved').length;
+    return { ok: true, approved: done, partly: mine.length - done, skipped: lines.length - mine.length };
   }, admin);
 
-  // Undo an approval (with a comment): the line is back to submitted and needs approving again.
+  // Undo the approvals (with a comment), including a first approval of two: the line is back to
+  // submitted with none, and needs approving again.
   router.post('/api/payout-lines/:id/undo-approve', ({ params, body, user }) => {
     const line = requireLine(params.id);
-    if (line.status !== 'approved') throw new HttpError(409, `${line.employee}'s line is ${line.status}, not approved.`);
+    const approved = line.status === 'approved' || (line.status === 'submitted' && q.approvals.all(line.id).length > 0);
+    if (!approved) throw new HttpError(409, `${line.employee}'s line is ${line.status}, not approved.`);
     const comment = requireComment(body, 'approval');
     transaction(() => {
       q.unapprove.run(line.id);
+      q.clearApprovals.run(line.id);
       logLine(line, 'undo_approve', comment, user);
     });
     return { ok: true };
@@ -352,11 +408,22 @@ export function registerPayoutRoutes(router) {
     return { ok: true, paid: lines.length };
   }, admin);
 
-  router.put('/api/payout-settings', ({ body }) => {
+  router.put('/api/payout-settings', ({ body, user }) => {
     const lag = Number(body?.pay_lag);
     if (!Number.isInteger(lag) || lag < 0 || lag > 12) throw new HttpError(400, 'Pay month must be 0 to 12 months after the quarter ends.');
-    q.saveSetting.run('pay_lag', String(lag));
-    return settings();
+    let approved = 0;
+    transaction(() => {
+      q.saveSetting.run('pay_lag', String(lag));
+      if (body?.approvals_required !== undefined) {
+        const needed = Number(body.approvals_required);
+        if (![0, 1, 2].includes(needed)) throw new HttpError(400, 'Approvals needed must be 0, 1 or 2.');
+        if (needed > 0 && q.adminCount.get().n <= needed) throw tooFewAdmins(needed);
+        q.saveSetting.run('approvals_required', String(needed));
+        // Lowering it approves waiting lines that now have enough approvals.
+        approved = approveReady(user);
+      }
+    });
+    return { ...settings(), approved };
   }, admin);
 
   // An employee's own quarterly statements (submitted, approved or paid), with the comment for them.

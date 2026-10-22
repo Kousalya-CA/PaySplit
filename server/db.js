@@ -333,12 +333,14 @@ if (!db.prepare('PRAGMA table_info(allocations)').all().some((c) => c.name === '
 // each line's breakdown (contributor row and month), frozen at submission; a row in a line is locked.
 // payout_notes holds the comment for an employee before submitting (and the undo comment if its submission was undone).
 // payout_log is the history of every step (submitted, approved, undone, paid) with its comment.
+// payout_approvals is each admin's approval of a line; a line is approved once it has as many as the
+// 'approvals_required' setting (0, 1 or 2; 1 by default). The submitter can't approve their own line.
 db.exec(`
   CREATE TABLE IF NOT EXISTS payout_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
-  INSERT OR IGNORE INTO payout_settings (key, value) VALUES ('pay_lag', '1'), ('first_quarter', '2026-Q4');
+  INSERT OR IGNORE INTO payout_settings (key, value) VALUES ('pay_lag', '1'), ('first_quarter', '2026-Q4'), ('approvals_required', '1');
   CREATE TABLE IF NOT EXISTS payout_runs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     quarter    TEXT NOT NULL UNIQUE,              -- '2026-Q4'
@@ -388,12 +390,24 @@ db.exec(`
     employee_id INTEGER NOT NULL REFERENCES employees(id),
     currency    TEXT NOT NULL,
     amount      REAL NOT NULL,
-    action      TEXT NOT NULL,                   -- submitted, approved, undo_approve, undo_submit, paid
+    action      TEXT NOT NULL,                   -- submitted, approval (1 of 2), approved, undo_approve, undo_submit, paid
     comment     TEXT,
     by_name     TEXT,
     at          TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_payout_log_quarter ON payout_log(quarter);
+  CREATE TABLE IF NOT EXISTS payout_approvals (
+    line_id   INTEGER NOT NULL REFERENCES payout_lines(id) ON DELETE CASCADE,
+    admin_id  INTEGER NOT NULL,
+    by_name   TEXT,
+    comment   TEXT,
+    at        TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (line_id, admin_id)
+  );
+  -- Lines approved before payout_approvals existed keep their one approval.
+  INSERT OR IGNORE INTO payout_approvals (line_id, admin_id, by_name, comment, at)
+    SELECT id, approved_by_id, approved_by, approver_comment, COALESCE(approved_at, datetime('now'))
+    FROM payout_lines WHERE approved_by_id IS NOT NULL;
 `);
 
 // Ratings: an admin rates each employee on each payment, for each month of it (part 0 = the whole

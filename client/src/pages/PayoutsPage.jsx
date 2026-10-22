@@ -8,11 +8,23 @@ import { Loading, ErrorNote } from '../components/common.jsx';
 // submit (amounts are frozen); a different admin approves each employee's line (or all at once); then
 // approved lines are marked paid with the payroll date. Until paid, an approval or a submission can be
 // undone with a comment. The History list shows every step with its comment.
+// How many admins approve each line (0, 1 or 2) is set on the Payouts list.
 export default function PayoutsPage({ quarter, user }) {
   return quarter ? <QuarterPayout quarter={quarter} user={user} /> : <PayoutList />;
 }
 
-const historyLabel = { submitted: 'Submitted', approved: 'Approved', undo_approve: 'Approval undone', undo_submit: 'Submission undone', paid: 'Paid' };
+const APPROVAL_CHOICES = [
+  [0, 'No approval (approved when submitted)'],
+  [1, '1 admin approves'],
+  [2, '2 admins approve'],
+];
+// What the approval rule means, for the quarter page.
+const approvalRule = (n) => (n === 0
+  ? 'no approval needed: lines are approved as soon as they are submitted.'
+  : n === 1
+    ? 'one submits, and any other admin approves (1 approval).'
+    : 'one submits, and two other admins each approve (2 approvals, from two different admins).');
+const historyLabel = { submitted: 'Submitted', approval: 'Approval added', approved: 'Approved', undo_approve: 'Approval undone', undo_submit: 'Submission undone', paid: 'Paid' };
 // A line's breakdown grouped by payment month: each customer once, with the employee's categories
 // and weightages, the amount, and their rating and comment.
 const byPayment = (items) => {
@@ -38,8 +50,9 @@ function PayoutList() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [lag, setLag] = useState('1');
+  const [approvals, setApprovals] = useState('1');
   const [notice, setNotice] = useState('');
-  const load = () => api.payouts.list().then((d) => { setData(d); setLag(String(d.settings.pay_lag)); }).catch((e) => setError(e.message));
+  const load = () => api.payouts.list().then((d) => { setData(d); setLag(String(d.settings.pay_lag)); setApprovals(String(d.settings.approvals_required)); }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
 
   if (error && !data) return <ErrorNote>{error}</ErrorNote>;
@@ -50,8 +63,8 @@ function PayoutList() {
     setError('');
     setNotice('');
     try {
-      await api.payouts.saveSettings(Number(lag));
-      setNotice('Saved.');
+      const r = await api.payouts.saveSettings(Number(lag), Number(approvals));
+      setNotice(r.approved ? `Saved. ${r.approved} waiting line${r.approved === 1 ? ' now has' : 's now have'} enough approvals and ${r.approved === 1 ? 'is' : 'are'} approved.` : 'Saved.');
       load();
     } catch (err) { setError(err.message); }
   };
@@ -61,7 +74,7 @@ function PayoutList() {
       <h1>Payouts</h1>
       <p className="muted">
         Pay is paid every quarter: Oct to Dec in January, Jan to Mar in April, and so on. Open a quarter to write a comment for
-        each employee and submit it; another admin approves; then mark it paid. Quarterly payouts start with {quarterLabel(data.settings.first_quarter)}.
+        each employee and submit it; other admins approve (as many as Approvals needed); then mark it paid. Quarterly payouts start with {quarterLabel(data.settings.first_quarter)}.
       </p>
       <ErrorNote>{error}</ErrorNote>
       <form className="row payout-settings" onSubmit={saveLag}>
@@ -71,6 +84,12 @@ function PayoutList() {
             <input type="number" min="0" max="12" step="1" value={lag} onChange={(e) => setLag(e.target.value)} required />
             <span aria-hidden="true">months after the quarter</span>
           </span>
+        </label>
+        <label>
+          <span>Approvals needed</span>
+          <select value={approvals} onChange={(e) => setApprovals(e.target.value)}>
+            {APPROVAL_CHOICES.map(([n, label]) => <option key={n} value={n}>{label}</option>)}
+          </select>
         </label>
         <button className="secondary" type="submit">Save</button>
         {notice && <span className="ok-text small">{notice}</span>}
@@ -148,7 +167,8 @@ function QuarterPayout({ quarter, user }) {
   const approve = (line) => {
     const comment = window.prompt(`Approve ${line.employee}'s ${moneyIn(line.amount, line.currency)}? Add a note if you like (optional).`, '');
     if (comment === null) return;
-    act(`line-${line.id}`, () => api.payouts.approve(line.id, comment), `Approved ${line.employee}.`);
+    act(`line-${line.id}`, () => api.payouts.approve(line.id, comment),
+      (r) => (r.status === 'approved' ? `Approved ${line.employee}.` : `Added your approval for ${line.employee}; it needs another admin's approval.`));
   };
   // Undo needs a comment saying why.
   const undo = (line, what, fn, done) => {
@@ -226,6 +246,7 @@ function QuarterPayout({ quarter, user }) {
       </div>
     );
   };
+  const needed = data.settings.approvals_required;
   const unratedDraft = data.draft.reduce((s, g) => s + unratedCount(g.items), 0);
 
   return (
@@ -239,7 +260,7 @@ function QuarterPayout({ quarter, user }) {
       </div>
       {data.running && <p className="warn-text small">This quarter hasn't ended yet, so more pay may still come in. You can submit now; pay added later goes in as another submission.</p>}
       <div className="approvers-panel small">
-        <strong>Who approves:</strong> any two admins sign off on each line: one submits, and any <em>other</em> admin approves it.
+        <strong>Who approves:</strong> {approvalRule(needed)}{needed > 0 && " The admin who submits a line can't approve it."} Change this with Approvals needed on the <a href="#/payouts">Payouts</a> page.
         <div>
           Admins ({data.admins.length}):{' '}
           {data.admins.map((a, i) => (
@@ -247,7 +268,12 @@ function QuarterPayout({ quarter, user }) {
           ))}
         </div>
       </div>
-      {data.admin_count < 2 && <p className="warn-text small">Approving needs a second admin (the admin who submits can't approve). Add another admin on the Users page.</p>}
+      {needed > 0 && data.admin_count <= needed && (
+        <p className="warn-text small">
+          Each line needs {needed} approval{needed === 1 ? '' : 's'} from admins other than the one who submits, so there have to be at least {needed + 1} admins.
+          Add another admin on the Users page, or lower Approvals needed.
+        </p>
+      )}
       <ErrorNote>{error}</ErrorNote>
       {notice && <p className="ok-text" role="status">{notice}</p>}
 
@@ -318,7 +344,8 @@ function QuarterPayout({ quarter, user }) {
             {approvable.length > 0 && (
               <button className="secondary" disabled={busy !== ''}
                 onClick={() => act('approve-all', () => api.payouts.approveAll(quarter),
-                  (r) => `Approved ${r.approved}.${r.skipped ? ` ${r.skipped} you submitted need another admin.` : ''}`)}>
+                  (r) => [`Approved ${r.approved}.`, r.partly ? `Added your approval to ${r.partly} that need another admin.` : '',
+                    r.skipped ? `${r.skipped} you submitted or already approved need other admins.` : ''].filter(Boolean).join(' '))}>
                 {busy === 'approve-all' ? 'Approving…' : `Approve all (${approvable.length})`}
               </button>
             )}
@@ -360,17 +387,21 @@ function QuarterPayout({ quarter, user }) {
                         <td className="small">
                           <span className={l.status === 'paid' ? 'paid-tag' : l.status === 'approved' ? 'ok-text' : ''}>
                             {l.status === 'paid' ? `✓ Paid ${dayLabel(l.paid_on)}` : payoutStatusLabel[l.status]}
+                            {l.status === 'submitted' && needed > 0 && ` (${l.approvals.length} of ${needed})`}
                           </span>
                           <div className="muted">Submitted by {l.submitted_by} · {l.submitted_at.slice(0, 16)} UTC</div>
-                          {l.approved_by && <div className="muted">Approved by {l.approved_by} · {l.approved_at.slice(0, 16)} UTC</div>}
+                          {l.approvals.map((a) => (
+                            <div key={a.admin_id} className="muted">Approved by {a.by_name} · {a.at.slice(0, 16)} UTC{a.comment ? ` · “${a.comment}”` : ''}</div>
+                          ))}
+                          {l.approvals.length === 0 && l.approved_by && <div className="muted">Approved by {l.approved_by} · {l.approved_at.slice(0, 16)} UTC</div>}
                           {l.status === 'submitted' && l.approvers.length > 0 && <div className="muted">Can approve: {l.approvers.join(', ')}</div>}
-                          {l.approver_comment && <div className="muted">Note: {l.approver_comment}</div>}
+                          {l.approvals.length === 0 && l.approver_comment && <div className="muted">Note: {l.approver_comment}</div>}
                         </td>
                         <td className="row-actions small">
                           {l.status === 'submitted' && (l.can_approve
                             ? <button className="link" disabled={busy !== ''} onClick={() => approve(l)}>Approve</button>
                             : <span className="muted" title={l.submitted_by_id === user.id ? 'You submitted it' : undefined}>
-                              {l.submitted_by_id === user.id ? 'Another admin approves' : 'Waiting'}
+                              {l.submitted_by_id === user.id ? 'Other admins approve' : l.approvals.some((a) => a.admin_id === user.id) ? 'You approved' : 'Waiting'}
                             </span>)}
                           {l.status === 'approved' && (
                             <button className="link" disabled={busy !== '' || !paidOn}
@@ -379,7 +410,9 @@ function QuarterPayout({ quarter, user }) {
                             </button>
                           )}
                           {l.status === 'submitted' && <button className="link danger" disabled={busy !== ''} onClick={() => undoSubmit(l)}>Undo submit</button>}
-                          {l.status === 'approved' && <button className="link danger" disabled={busy !== ''} onClick={() => undoApprove(l)}>Undo approve</button>}
+                          {(l.status === 'approved' || (l.status === 'submitted' && l.approvals.length > 0)) && (
+                            <button className="link danger" disabled={busy !== ''} onClick={() => undoApprove(l)}>Undo approve</button>
+                          )}
                         </td>
                       </tr>
                       {open.has(key) && <Breakdown items={l.items} currency={l.currency} colSpan={5} />}

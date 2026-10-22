@@ -42,7 +42,7 @@ It works the same way as the workbook:
    (Oct to Dec, Jan to Mar, ...) and is paid in the pay month, 1 month after the quarter by default
    (so Oct to Dec is paid in January). For a quarter, an admin writes a **comment for each employee**
    and submits it (the amounts are frozen and that pay is locked on the payment pages); a **different
-   admin approves** each employee's line, or all at once (the page lists the admins, and each waiting line shows who can approve it), then the
+   admin approves** each employee's line, or all at once (the page lists the admins, and each waiting line shows who can approve it). **Approvals needed** on the Payouts page sets how many: 0 (lines are approved when submitted), 1 (default) or 2 different admins, never the one who submitted; lowering it approves waiting lines that already have enough. Then the
    approved lines are marked paid with the payroll date. Until paid, an approval can be undone (the line
    waits for approval again) and a submission undone (its pay is back in To submit), each with a comment;
    the quarter's **History** shows every step, who did it and the comment, and opening a line shows its own submission and approval history. Pay added later for a quarter that's already
