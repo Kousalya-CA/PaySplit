@@ -454,3 +454,9 @@ a.secondary { display: inline-block; text-decoration: none; }
 .rating-card .link + .link { margin-left: 1rem; }
 .payout-items th { padding: .2rem .5rem; font-size: .8rem; text-align: left; }
 .payout-comment { max-width: 24rem; white-space: pre-wrap; }
+
+/* Payouts: who approves, and each line's history. */
+.approvers-panel { border: 1px solid var(--border, #ddd); border-radius: 6px; padding: 8px 12px; margin: 8px 0 12px; }
+.line-history-title { font-size: 0.95rem; margin: 4px 0; }
+.line-history { margin: 0; padding-left: 20px; }
+.line-history li { margin: 2px 0; }

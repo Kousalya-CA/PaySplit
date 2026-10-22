@@ -192,6 +192,29 @@ function QuarterPayout({ quarter, user }) {
       </td>
     </tr>
   );
+  // Every submit / approve / undo / paid step for one employee in this quarter, oldest first.
+  const LineHistory = ({ employeeId, colSpan }) => {
+    const steps = data.history.filter((h) => h.employee_id === employeeId).reverse();
+    return (
+      <tr className="drill-row">
+        <td colSpan={colSpan}>
+          <h3 className="line-history-title">Submission and approval history</h3>
+          {steps.length === 0 ? <p className="muted small">No steps yet.</p> : (
+            <ol className="line-history small">
+              {steps.map((h) => (
+                <li key={h.id}>
+                  <span className="muted">{h.at.slice(0, 16)} UTC</span>{' '}
+                  <strong className={h.action.startsWith('undo') ? 'warn-text' : ''}>{historyLabel[h.action] || h.action}</strong>{' '}
+                  by {h.by_name} · {moneyIn(h.amount, h.currency)}
+                  {h.comment && <div className="muted">“{h.comment}”</div>}
+                </li>
+              ))}
+            </ol>
+          )}
+        </td>
+      </tr>
+    );
+  };
   const ratingSummary = (items) => {
     const avg = avgRating(items);
     const missing = unratedCount(items);
@@ -215,6 +238,15 @@ function QuarterPayout({ quarter, user }) {
         </div>
       </div>
       {data.running && <p className="warn-text small">This quarter hasn't ended yet, so more pay may still come in. You can submit now; pay added later goes in as another submission.</p>}
+      <div className="approvers-panel small">
+        <strong>Who approves:</strong> any two admins sign off on each line: one submits, and any <em>other</em> admin approves it.
+        <div>
+          Admins ({data.admins.length}):{' '}
+          {data.admins.map((a, i) => (
+            <span key={a.id}>{i ? ', ' : ''}{a.name}{a.is_owner ? ' (owner)' : ''}{a.invited ? ' (invited)' : ''}{a.id === user.id ? ' (you)' : ''}</span>
+          ))}
+        </div>
+      </div>
       {data.admin_count < 2 && <p className="warn-text small">Approving needs a second admin (the admin who submits can't approve). Add another admin on the Users page.</p>}
       <ErrorNote>{error}</ErrorNote>
       {notice && <p className="ok-text" role="status">{notice}</p>}
@@ -329,7 +361,9 @@ function QuarterPayout({ quarter, user }) {
                           <span className={l.status === 'paid' ? 'paid-tag' : l.status === 'approved' ? 'ok-text' : ''}>
                             {l.status === 'paid' ? `✓ Paid ${dayLabel(l.paid_on)}` : payoutStatusLabel[l.status]}
                           </span>
-                          <div className="muted">Submitted by {l.submitted_by}{l.approved_by ? `, approved by ${l.approved_by}` : ''}</div>
+                          <div className="muted">Submitted by {l.submitted_by} · {l.submitted_at.slice(0, 16)} UTC</div>
+                          {l.approved_by && <div className="muted">Approved by {l.approved_by} · {l.approved_at.slice(0, 16)} UTC</div>}
+                          {l.status === 'submitted' && l.approvers.length > 0 && <div className="muted">Can approve: {l.approvers.join(', ')}</div>}
                           {l.approver_comment && <div className="muted">Note: {l.approver_comment}</div>}
                         </td>
                         <td className="row-actions small">
@@ -349,6 +383,7 @@ function QuarterPayout({ quarter, user }) {
                         </td>
                       </tr>
                       {open.has(key) && <Breakdown items={l.items} currency={l.currency} colSpan={5} />}
+                      {open.has(key) && <LineHistory employeeId={l.employee_id} colSpan={5} />}
                     </Fragment>
                   );
                 })}

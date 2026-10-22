@@ -42,10 +42,10 @@ It works the same way as the workbook:
    (Oct to Dec, Jan to Mar, ...) and is paid in the pay month, 1 month after the quarter by default
    (so Oct to Dec is paid in January). For a quarter, an admin writes a **comment for each employee**
    and submits it (the amounts are frozen and that pay is locked on the payment pages); a **different
-   admin approves** each employee's line, or all at once, then the
+   admin approves** each employee's line, or all at once (the page lists the admins, and each waiting line shows who can approve it), then the
    approved lines are marked paid with the payroll date. Until paid, an approval can be undone (the line
    waits for approval again) and a submission undone (its pay is back in To submit), each with a comment;
-   the quarter's **History** shows every step, who did it and the comment. Pay added later for a quarter that's already
+   the quarter's **History** shows every step, who did it and the comment, and opening a line shows its own submission and approval history. Pay added later for a quarter that's already
    paid goes into the next quarter. Employees see their own statements and comments on My pay, and
    their ratings and rating comments once the line is approved. Opening an employee on the Payouts page
    shows each customer with the weightage, amount, rating and comment; submitting freezes the ratings.

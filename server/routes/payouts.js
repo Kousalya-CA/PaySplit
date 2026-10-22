@@ -74,6 +74,7 @@ const q = {
       sent_back_by = excluded.sent_back_by, updated_at = datetime('now')`),
   clearSentBack: db.prepare('UPDATE payout_notes SET sent_back_reason = NULL, sent_back_by = NULL WHERE quarter = ? AND employee_id = ?'),
   adminCount: db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'"),
+  admins: db.prepare("SELECT id, name, is_owner, password_hash = '' AS invited FROM users WHERE role = 'admin' ORDER BY is_owner DESC, name"),
   sentBackQuarters: db.prepare('SELECT DISTINCT quarter FROM payout_notes WHERE sent_back_reason IS NOT NULL'),
 };
 
@@ -198,7 +199,8 @@ export function registerPayoutRoutes(router) {
     const quarter = requireQuarter(params.quarter);
     const { cfg, linesBy, draft } = state();
     const notes = new Map(q.notes.all(quarter).map((n) => [n.employee_id, n]));
-    const adminCount = q.adminCount.get().n;
+    const admins = q.admins.all().map((a) => ({ ...a, is_owner: !!a.is_owner, invited: !!a.invited }));
+    const adminCount = admins.length;
     return {
       ...quarterInfo(quarter, cfg.pay_lag),
       running: thisMonth() <= quarterMonths(quarter).to,
@@ -210,8 +212,11 @@ export function registerPayoutRoutes(router) {
       lines: (linesBy.get(quarter) || []).map((l) => ({
         ...withItems(l),
         can_approve: l.status === 'submitted' && adminCount >= 2 && l.submitted_by_id !== user.id,
+        // Four-eyes: any admin except the one who submitted the line.
+        approvers: adminCount >= 2 ? admins.filter((a) => a.id !== l.submitted_by_id).map((a) => a.name) : [],
       })),
       admin_count: adminCount,
+      admins,
       history: q.history.all(quarter),
     };
   }, admin);
