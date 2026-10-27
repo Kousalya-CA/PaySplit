@@ -27,6 +27,7 @@ const blankShare = (name, from, frequency, copy = {}) => ({
   key: nextKey++, name, from_month: from, to_month: addMonths(from, spanFor(frequency) - 1),
   direct: copy.direct ?? '70', support: copy.support ?? '20', others: copy.others ?? '10',
   payout_type: copy.payout_type || 'once', pay_from: from, pay_to: addMonths(from, 11),
+  pay_years: copy.pay_years || 'first',
 });
 
 export const newShares = (onboard, frequency) => [blankShare('Onboarding', onboard, frequency)];
@@ -38,6 +39,7 @@ export const sharesFromCustomer = (customer) => customer.shares.map((s) => {
     key: nextKey++, name: s.name, from_month: from, to_month: s.to_month || '',
     direct: pctText(s.direct_pct), support: pctText(s.support_pct), others: pctText(s.others_pct),
     payout_type: s.payout_type || 'once', pay_from: s.pay_from || from, pay_to: s.pay_to || addMonths(s.pay_from || from, 11),
+    pay_years: s.pay_years === 'all' ? 'all' : 'first',
   };
 });
 
@@ -70,6 +72,7 @@ export const sharesForApi = (shares) => shares.map((s) => ({
   payout_type: s.payout_type === 'custom' ? 'custom' : 'once',
   pay_from: s.payout_type === 'custom' ? s.pay_from || null : null,
   pay_to: s.payout_type === 'custom' ? s.pay_to || null : null,
+  pay_years: s.pay_years === 'all' ? 'all' : 'first', // Three Years only
 }));
 
 // 'Oct 2026 to Sep 2027', or one month.
@@ -84,6 +87,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export default function RevenueShares({ shares, onChange, onboard, frequency }) {
   const monthly = frequency === 'Monthly';
+  const threeYears = frequency === 'Three Years';
   const span = spanFor(frequency);
 
   const update = (key, patch) => onChange(shares.map((s) => (s.key === key ? { ...s, ...patch } : s)));
@@ -111,7 +115,9 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
         const sum = ['direct', 'support', 'others'].reduce((t, k) => t + (parseNum(s[k]) || 0), 0);
         const ok = Math.abs(sum - 100) < 0.0001;
         const months = monthCount(s.from_month, s.to_month);
-        const yearly = monthly ? 0 : Math.max(1, Math.floor((months - 1) / 12) + 1);
+        const everyYear = monthly ? 0 : Math.max(1, Math.floor((months - 1) / 12) + 1);
+        // Three Years pays only Year 1 unless "Every year" is chosen.
+        const yearly = threeYears && s.pay_years !== 'all' ? 1 : everyYear;
         const custom = s.payout_type === 'custom';
         const payParts = monthCount(s.pay_from, s.pay_to);
         return (
@@ -139,11 +145,21 @@ export default function RevenueShares({ shares, onChange, onboard, frequency }) 
                 <span>Billing to</span>
                 <input type="month" value={s.to_month} min={s.from_month} required onChange={(e) => update(s.key, { to_month: e.target.value })} />
               </label>
+              {threeYears && (
+                <label>
+                  <span>Payments</span>
+                  <select value={s.pay_years === 'all' ? 'all' : 'first'} onChange={(e) => update(s.key, { pay_years: e.target.value })}>
+                    <option value="first">Year 1 only</option>
+                    <option value="all">Every year (Year 1, 2, 3)</option>
+                  </select>
+                </label>
+              )}
             </div>
             <p className="muted small">
               {months === 0 ? 'Choose the billing To month (on or after the payment date).'
                 : monthly ? `${plural(months, 'monthly payment')}, ${monthLabel(s.from_month)} to ${monthLabel(s.to_month)}.`
-                  : `${plural(yearly, 'yearly payment')}${yearly > 1 ? ` (Year 1 to Year ${yearly})` : ''}, each in ${monthLabel(s.from_month).slice(0, 3)}, from ${monthLabel(s.from_month)}.`}
+                  : threeYears && s.pay_years !== 'all' ? `One payment, for Year 1, in ${monthLabel(s.from_month)}.`
+                    : `${plural(yearly, 'yearly payment')}${yearly > 1 ? ` (Year 1 to Year ${yearly})` : ''}, each in ${monthLabel(s.from_month).slice(0, 3)}, from ${monthLabel(s.from_month)}.`}
               {first && s.from_month && onboard && s.from_month !== onboard && ` Onboarded ${monthLabel(onboard)}; billing starts ${monthLabel(s.from_month)}.`}
             </p>
 

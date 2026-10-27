@@ -275,6 +275,12 @@ for (const [col, type] of [['paid_on', 'TEXT'], ['paid_amount', 'REAL'], ['paid_
   // A share's custom payout months (for its first payment; later payments move along by the same
   // number of months). NULL = from each payment's month for 12 months.
   if (!shareCols.has('pay_from')) db.exec('ALTER TABLE shares ADD COLUMN pay_from TEXT; ALTER TABLE shares ADD COLUMN pay_to TEXT;');
+  // Three Years shares: 'first' = only the Year 1 payment (the default), 'all' = a payment every year
+  // (Year 1, 2, 3). Shares saved before this keep every year, so their payments don't change.
+  if (!shareCols.has('pay_years')) {
+    db.exec(`ALTER TABLE shares ADD COLUMN pay_years TEXT;
+      UPDATE shares SET pay_years = 'all' WHERE customer_id IN (SELECT id FROM customers WHERE frequency = 'Three Years');`);
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS part_paid (
       allocation_id INTEGER NOT NULL REFERENCES allocations(id) ON DELETE CASCADE,

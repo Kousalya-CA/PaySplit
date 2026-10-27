@@ -82,7 +82,7 @@ function DeployedCell({ customer, deployments }) {
 const FREQUENCY_OPTIONS = [
   ['Monthly', 'A payment every month from the payment date (12 months by default), each with its own amount and split.'],
   ['Yearly', 'One payment a year from the payment date.'],
-  ['Three Years', 'A 36-month contract with a yearly payment from the payment date: Year 1, Year 2, Year 3.'],
+  ['Three Years', 'A 36-month contract, paid for Year 1 on the payment date (or every year, Year 1 to 3, if chosen on the revenue share).'],
 ];
 
 // The currency the customer is billed in. Revenue is entered in it, and pay is in it unless a

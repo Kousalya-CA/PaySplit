@@ -62,8 +62,8 @@ const q = {
   sharesFor: db.prepare('SELECT * FROM shares WHERE customer_id = ? ORDER BY from_month'),
   deleteSharesFor: db.prepare('DELETE FROM shares WHERE customer_id = ?'),
   insertShare: db.prepare(`
-    INSERT INTO shares (customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct, payout_type, pay_from, pay_to)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    INSERT INTO shares (customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct, payout_type, pay_from, pay_to, pay_years)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   movePeriod: db.prepare('UPDATE periods SET start_month = ? WHERE id = ?'),
   customerHasData: db.prepare(`
     SELECT EXISTS (
@@ -257,7 +257,8 @@ function parseShares(list, onboard, frequency) {
       if (monthsFrom(payFrom, payTo) > 120) throw new HttpError(400, `${name}: keep the payout to 120 months or fewer.`);
     }
     return { name, from_month: from, to_month: to, payment_month: null, ...parseSplit(s, name),
-      payout_type: custom ? 'custom' : 'once', pay_from: payFrom, pay_to: payTo };
+      payout_type: custom ? 'custom' : 'once', pay_from: payFrom, pay_to: payTo,
+      pay_years: frequency === 'Three Years' ? (s.pay_years === 'all' ? 'all' : 'first') : null };
   }).sort((a, b) => a.from_month.localeCompare(b.from_month));
 
   for (let i = 1; i < shares.length; i++) {
@@ -273,7 +274,8 @@ function parseShares(list, onboard, frequency) {
 }
 
 // The payments inside one share: every month for Monthly, one payment for Yearly.
-// Three Years creates 3 yearly periods: Year 1 (from_month), Year 2 (+12 months), Year 3 (+24 months).
+// Three Years: only Year 1 (the payment date) by default; with pay_years 'all', a payment every year:
+// Year 1 (from_month), Year 2 (+12 months), Year 3 (+24 months).
 function paymentMonths(share, frequency) {
   if (frequency === 'Monthly') {
     const months = [];
@@ -284,6 +286,7 @@ function paymentMonths(share, frequency) {
   // (at least one). Shares saved before payment dates keep their payment_month as the first payment.
   const base = share.payment_month || share.from_month;
   const months = [base];
+  if (frequency === 'Three Years' && share.pay_years !== 'all') return months;
   for (let m = addMonths(base, 12); share.to_month && m <= share.to_month; m = addMonths(m, 12)) months.push(m);
   return months;
 }
@@ -325,7 +328,7 @@ function saveShares(customerId, shares, frequency) {
   syncPeriods(customerId, shares, frequency, true, q.sharesFor.all(customerId));
   q.deleteSharesFor.run(customerId);
   for (const s of shares) {
-    q.insertShare.run(customerId, s.name, s.from_month, s.to_month, s.payment_month, s.direct, s.support, s.others, s.payout_type, s.pay_from, s.pay_to);
+    q.insertShare.run(customerId, s.name, s.from_month, s.to_month, s.payment_month, s.direct, s.support, s.others, s.payout_type, s.pay_from, s.pay_to, s.pay_years);
   }
 }
 

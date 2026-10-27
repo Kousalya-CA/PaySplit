@@ -15,8 +15,8 @@ It works the same way as the workbook:
    between **Direct**, **Support** and **Others**, which must add up to 100% (for example 70 / 20 / 10).
 2. Each revenue share is filled in top to bottom: (1) the **payment date**, when billing starts (the
    onboard month is not the billing date; it can't be before it); (2) **billing From** (= the payment
-   date) and **To**, 12 months on by default (36 for Three Years): Monthly bills every month, Yearly
-   and Three Years once a year from the payment date; (3) the **payment type**, One time or Custom
+   date) and **To**, 12 months on by default (36 for Three Years): Monthly bills every month,
+   Yearly once a year from the payment date, and Three Years once, for Year 1, unless its share is set to pay **every year** (Year 1, 2, 3); (3) the **payment type**, One time or Custom
    with **Payout From/To** (for the first payment; later payments move along); (4) Direct / Support / Others.
 3. In each period you enter the **revenue** in the customer's currency and the **share for employees**
    (10% by default), and add **contributors** to each category, each with a **weightage %**.
