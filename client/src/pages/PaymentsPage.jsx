@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { monthLabel, pct, dayLabel, moneyList, CURRENCIES, quarterLabel, payoutStatusLabel } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
+import { EmpName, useEmployeeMap } from '../components/EmpStatus.jsx';
 
 // Same as the "All Payments" sheet: one row per employee per category per period (one row per month
 // when a payment is split over months). The first column is the month the pay is for.
@@ -9,6 +10,7 @@ import { Loading, ErrorNote, Money } from '../components/common.jsx';
 // currency (INR when the payment was converted). Total revenue isn't shown, only the employees' share.
 export default function PaymentsPage({ isAdmin }) {
   const [rows, setRows] = useState(null);
+  const emps = useEmployeeMap(isAdmin); // PIP / Relieved highlights (admins only)
   const [error, setError] = useState('');
   const [filters, setFilters] = useState({ customer: '', employee: '', year: '', status: '', currency: '' });
 
@@ -134,7 +136,7 @@ export default function PaymentsPage({ isAdmin }) {
                     </td>
                     <td>{isAdmin ? <a href={`#/customers/${r.customer_id}`}>{r.customer}</a> : r.customer}</td>
                     <td>{r.category}</td>
-                    <th scope="row">{r.employee}</th>
+                    <th scope="row"><EmpName emp={emps.get(r.employee_id)} name={r.employee} from={r.month} /></th>
                     <td className="num">{pct(r.category_pct)}</td>
                     <td className="num">{pct(r.weightage)}</td>
                     <td className="strong"><Money value={r.pay} currency={r.currency} /></td>

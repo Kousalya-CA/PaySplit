@@ -42,6 +42,14 @@ const q = {
     FROM employees e ORDER BY e.active DESC, e.id`),
   payByEmployeeCurrency: db.prepare('SELECT employee_id, currency, SUM(pay) AS amount FROM payments GROUP BY employee_id, currency ORDER BY currency'),
   employee: db.prepare('SELECT id, employee_code, name, email, active, type FROM employees WHERE id = ?'),
+  relievedAll: db.prepare('SELECT id, relieved_on, relieved_note FROM employees'),
+  setRelieved: db.prepare('UPDATE employees SET relieved_on = ?, relieved_note = ? WHERE id = ?'),
+  pipsAll: db.prepare('SELECT * FROM employee_pips ORDER BY employee_id, from_month'),
+  pipsFor: db.prepare('SELECT * FROM employee_pips WHERE employee_id = ? ORDER BY from_month'),
+  pip: db.prepare('SELECT p.*, e.name AS employee FROM employee_pips p JOIN employees e ON e.id = p.employee_id WHERE p.id = ?'),
+  insertPip: db.prepare('INSERT INTO employee_pips (employee_id, from_month, to_month, comment, added_by) VALUES (?, ?, ?, ?, ?)'),
+  updatePip: db.prepare('UPDATE employee_pips SET from_month = ?, to_month = ?, comment = ? WHERE id = ?'),
+  deletePip: db.prepare('DELETE FROM employee_pips WHERE id = ?'),
   insertEmployee: db.prepare('INSERT INTO employees (name, type, email, employee_code) VALUES (?, ?, ?, ?)'),
   updateEmployee: db.prepare('UPDATE employees SET name = ?, active = ?, type = ?, email = ?, employee_code = ? WHERE id = ?'),
   deleteEmployee: db.prepare('DELETE FROM employees WHERE id = ?'),
@@ -506,10 +514,71 @@ export function registerDataRoutes(router) {
   router.get('/api/employees', ({ user }) => {
     const mine = isAdmin(user) ? null : myEmployeeId(user);
     const pay = byCurrency(q.payByEmployeeCurrency.all(), 'employee_id');
-    return q.employees.all()
+    const list = q.employees.all()
       .filter((e) => isAdmin(user) || e.id === mine)
       .map((e) => ({ ...e, active: Boolean(e.active), pay: pay.get(e.id) || [] }));
+    if (!isAdmin(user)) return list;
+    // Relieved and PIPs are for admins only.
+    const relieved = new Map(q.relievedAll.all().map((r) => [r.id, r]));
+    const pips = q.pipsAll.all();
+    return list.map((e) => ({
+      ...e,
+      relieved_on: relieved.get(e.id)?.relieved_on || null,
+      relieved_note: relieved.get(e.id)?.relieved_note || null,
+      pips: pips.filter((p) => p.employee_id === e.id),
+    }));
   });
+
+  // Relieved date (or null to clear it) and a note. Pay isn't affected.
+  router.put('/api/employees/:id/relieved', ({ params, body }) => {
+    const emp = q.employee.get(params.id);
+    if (!emp) throw new HttpError(404, 'Employee not found.');
+    const day = body?.relieved_on ? String(body.relieved_on) : null;
+    if (day) {
+      const date = new Date(`${day}T00:00:00Z`);
+      if (!DATE_RE.test(day) || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== day) {
+        throw new HttpError(400, 'Choose the relieved date.');
+      }
+    }
+    const note = day ? String(body?.note ?? '').trim() || null : null;
+    if (note && note.length > 2000) throw new HttpError(400, 'Keep the note to 2000 characters or fewer.');
+    q.setRelieved.run(day, note, emp.id);
+    return { id: emp.id, relieved_on: day, relieved_note: note };
+  }, admin);
+
+  // PIPs: From and To months with a comment; several per employee, but they can't overlap.
+  const parsePip = (body, employeeId, exceptId = null) => {
+    const from = String(body?.from_month ?? '');
+    const to = String(body?.to_month ?? '');
+    if (!MONTH_RE.test(from) || !MONTH_RE.test(to)) throw new HttpError(400, 'Choose the PIP From and To months.');
+    if (to < from) throw new HttpError(400, 'The PIP To month is before its From month.');
+    const comment = String(body?.comment ?? '').trim() || null;
+    if (comment && comment.length > 2000) throw new HttpError(400, 'Keep the comment to 2000 characters or fewer.');
+    const clash = q.pipsFor.all(employeeId).find((p) => p.id !== exceptId && p.from_month <= to && p.to_month >= from);
+    if (clash) throw new HttpError(409, `This overlaps the PIP from ${monthLabel(clash.from_month)} to ${monthLabel(clash.to_month)}. Change the months, or edit that PIP.`);
+    return { from, to, comment };
+  };
+  router.post('/api/employees/:id/pips', ({ params, body, user, setStatus }) => {
+    const emp = q.employee.get(params.id);
+    if (!emp) throw new HttpError(404, 'Employee not found.');
+    const p = parsePip(body, emp.id);
+    const id = Number(q.insertPip.run(emp.id, p.from, p.to, p.comment, user.name || user.email).lastInsertRowid);
+    setStatus(201);
+    return q.pip.get(id);
+  }, admin);
+  router.put('/api/pips/:id', ({ params, body }) => {
+    const pip = q.pip.get(params.id);
+    if (!pip) throw new HttpError(404, 'That PIP wasn\'t found. Reload the page.');
+    const p = parsePip(body, pip.employee_id, pip.id);
+    q.updatePip.run(p.from, p.to, p.comment, pip.id);
+    return q.pip.get(pip.id);
+  }, admin);
+  router.delete('/api/pips/:id', ({ params }) => {
+    const pip = q.pip.get(params.id);
+    if (!pip) throw new HttpError(404, 'That PIP wasn\'t found. Reload the page.');
+    q.deletePip.run(pip.id);
+    return { ok: true };
+  }, admin);
 
   router.post('/api/employees', ({ body, setStatus }) => {
     const name = String(body.name ?? '').trim();

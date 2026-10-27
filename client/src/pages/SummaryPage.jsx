@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { moneyIn, currencySymbol, monthLabel, quarterLabel, payoutStatusLabel, dayLabel, ratingLabel } from '../format.js';
 import { Loading, ErrorNote, Money as MoneyIn } from '../components/common.jsx';
+import { EmpName, columnRange, flagClass, useEmployeeMap } from '../components/EmpStatus.jsx';
 
 // Same as the "Monthly Summary" sheet: pay per employee per month, then yearly totals.
 // Allocated is the pay worked out from the splits; Paid is what's been marked as paid; Pending is the rest.
@@ -12,6 +13,7 @@ export default function SummaryPage({ isAdmin }) {
   const [error, setError] = useState('');
   const [view, setView] = useState('allocated');
   const [currency, setCurrency] = useState('');
+  const emps = useEmployeeMap(isAdmin); // PIP / Relieved highlights (admins only)
 
   useEffect(() => { api.summary(currency).then(setData).catch((e) => setError(e.message)); }, [currency]);
   // An employee's own quarterly statements.
@@ -114,7 +116,7 @@ export default function SummaryPage({ isAdmin }) {
               <th scope="col" className="num">Total</th>
             </tr>
           </thead>
-          <EmployeeRows currency={cur} employees={employees} columns={months} by="byMonth" linkCustomers={isAdmin} cell={cell} rowTotal={rowTotal} />
+          <EmployeeRows emps={emps} currency={cur} employees={employees} columns={months} by="byMonth" linkCustomers={isAdmin} cell={cell} rowTotal={rowTotal} />
           <tfoot>
             <tr>
               <th scope="row">Total</th>
@@ -135,7 +137,7 @@ export default function SummaryPage({ isAdmin }) {
               <th scope="col" className="num">Total</th>
             </tr>
           </thead>
-          <EmployeeRows currency={cur} employees={employees} columns={years} by="byYear" linkCustomers={isAdmin} cell={cell} rowTotal={rowTotal} />
+          <EmployeeRows emps={emps} currency={cur} employees={employees} columns={years} by="byYear" linkCustomers={isAdmin} cell={cell} rowTotal={rowTotal} />
           <tfoot>
             <tr>
               <th scope="row">Total</th>
@@ -154,7 +156,8 @@ export default function SummaryPage({ isAdmin }) {
 }
 
 // One row per employee; clicking the name drills down into their pay by customer.
-function EmployeeRows({ employees, columns, by, linkCustomers, cell, rowTotal, currency }) {
+function EmployeeRows({ emps, employees, columns, by, linkCustomers, cell, rowTotal, currency }) {
+  const [first, last] = [columnRange(columns[0] || '')[0], columnRange(columns[columns.length - 1] || '')[1]];
   const Money = ({ value }) => <MoneyIn value={value} currency={currency} />;
   const [open, setOpen] = useState(() => new Set());
   const toggle = (id) => setOpen((prev) => {
@@ -180,12 +183,12 @@ function EmployeeRows({ employees, columns, by, linkCustomers, cell, rowTotal, c
                     onClick={() => toggle(e.id)}
                     title={expanded ? 'Hide customer split' : 'Show customer split'}
                   >
-                    <span className="drill-caret" aria-hidden="true">▸</span>{e.name}
+                    <span className="drill-caret" aria-hidden="true">▸</span><EmpName emp={emps.get(e.id)} name={e.name} from={first} to={last} />
                   </button>
-                ) : e.name}
+                ) : <EmpName emp={emps.get(e.id)} name={e.name} from={first} to={last} />}
                 {!e.active && <span className="tag">Inactive</span>}
               </th>
-              {columns.map((c) => <td key={c}><Money value={cell(e, by, c)} /></td>)}
+              {columns.map((c) => <td key={c} className={flagClass(emps.get(e.id), ...columnRange(c))}><Money value={cell(e, by, c)} /></td>)}
               <td className="strong"><Money value={rowTotal(e)} /></td>
             </tr>
             {expanded && e.customers.map((c) => (

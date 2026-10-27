@@ -42,6 +42,10 @@ export const api = {
     update: (id, body) => request(`/employees/${id}`, { method: 'PATCH', body }),
     remove: (id) => request(`/employees/${id}`, { method: 'DELETE' }),
     tasks: (id, month) => request(`/employees/${id}/tasks${month ? `?month=${month}` : ''}`),
+    setRelieved: (id, relievedOn, note) => request(`/employees/${id}/relieved`, { method: 'PUT', body: { relieved_on: relievedOn, note } }),
+    addPip: (id, body) => request(`/employees/${id}/pips`, { method: 'POST', body }),
+    updatePip: (pipId, body) => request(`/pips/${pipId}`, { method: 'PUT', body }),
+    removePip: (pipId) => request(`/pips/${pipId}`, { method: 'DELETE' }),
   },
   azdo: {
     config: () => request('/azdo/config'),

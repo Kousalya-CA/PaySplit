@@ -1,3 +1,4 @@
+import { EmpName, useEmployeeMap } from '../components/EmpStatus.jsx';
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
@@ -35,6 +36,7 @@ export default function TeamProgress({ customer }) {
   const [loading, setLoading] = useState(false);
   const [sort, setSort] = useState('closed');
   const [open, setOpen] = useState(() => new Set()); // employee ids (or 'others') whose items are shown
+  const emps = useEmployeeMap(); // PIP / Relieved highlights
   const toggle = (key) => setOpen((prev) => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -142,7 +144,7 @@ export default function TeamProgress({ customer }) {
                 <tbody>
                   {people.map((r, i) => (
                     <Row key={r.id} rank={i + 1} row={r} open={open.has(r.id)} onToggle={() => toggle(r.id)} items={itemsFor(r.id)}
-                      name={<a href={`#/employees/${r.id}`}>{r.name}</a>}
+                      name={<a href={`#/employees/${r.id}`}><EmpName emp={emps.get(r.id)} name={r.name} from={r.months[0]} to={r.months[r.months.length - 1]} /></a>}
                       split={r.inSplit ? 'Yes' : <span className="warn-text" title="Works on this customer but isn't in any of its splits">No ⚠</span>} />
                   ))}
                   {data.others && (

@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { dayLabel, monthLabel } from '../format.js';
+import { EmpTags, thisMonth as currentMonth } from '../components/EmpStatus.jsx';
 
 const hours = (n) => (n ? `${+n.toFixed(2)}` : '–');
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
 // One employee's Azure DevOps work: pick a year, then a month (a monthly sprint), then one table for
 // every area path in that month: User Stories and Issues with their child Tasks and Bugs below them.
-export default function EmployeeDetail({ id }) {
+export default function EmployeeDetail({ id, isAdmin }) {
   const [overview, setOverview] = useState(null);
   const [year, setYear] = useState(null);
   const [month, setMonth] = useState(null);
@@ -62,6 +63,8 @@ export default function EmployeeDetail({ id }) {
         {month && !loading && <button className="secondary" onClick={() => loadMonth(month)}>Reload</button>}
       </div>
 
+      {isAdmin && <EmployeeStatus id={id} />}
+
       <h2>Azure DevOps work</h2>
       {overview.message ? <div className="empty"><p>{overview.message}</p></div> : (
         <>
@@ -86,6 +89,114 @@ export default function EmployeeDetail({ id }) {
           {table && <MonthTable data={table} />}
         </>
       )}
+    </section>
+  );
+}
+
+// Relieved and PIPs (admins only). Pay isn't affected: the employee's name is highlighted on every
+// page in their PIP months, and from their relieved month on.
+function EmployeeStatus({ id }) {
+  const [emp, setEmp] = useState(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [relieved, setRelieved] = useState({ on: '', note: '' });
+  const blankPip = { id: null, from_month: '', to_month: '', comment: '' };
+  const [pip, setPip] = useState(blankPip); // the PIP being added (id null) or edited
+
+  const load = () => api.employees.list().then((list) => {
+    const e = list.find((x) => x.id === id) || null;
+    setEmp(e);
+    if (e) setRelieved({ on: e.relieved_on || '', note: e.relieved_note || '' });
+  }).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, [id]);
+  if (!emp) return error ? <ErrorNote>{error}</ErrorNote> : null;
+
+  const run = async (fn, done) => {
+    setError('');
+    setNotice('');
+    try { await fn(); setNotice(done); await load(); return true; } catch (err) { setError(err.message); return false; }
+  };
+  const saveRelieved = (e) => {
+    e.preventDefault();
+    run(() => api.employees.setRelieved(id, relieved.on || null, relieved.note), relieved.on ? 'Relieved date saved.' : 'Relieved date cleared.');
+  };
+  const clearRelieved = () => {
+    if (!window.confirm(`Clear ${emp.name}'s relieved date?`)) return;
+    run(() => api.employees.setRelieved(id, null, ''), 'Relieved date cleared.');
+  };
+  const savePip = async (e) => {
+    e.preventDefault();
+    const body = { from_month: pip.from_month, to_month: pip.to_month, comment: pip.comment };
+    const ok = await run(() => (pip.id ? api.employees.updatePip(pip.id, body) : api.employees.addPip(id, body)), pip.id ? 'PIP updated.' : 'PIP added.');
+    if (ok) setPip(blankPip);
+  };
+  const removePip = (p) => {
+    if (!window.confirm(`Delete the PIP from ${monthLabel(p.from_month)} to ${monthLabel(p.to_month)}?`)) return;
+    run(() => api.employees.removePip(p.id), 'PIP deleted.');
+  };
+
+  return (
+    <section className="emp-status">
+      <h2>Relieved &amp; PIP <EmpTags emp={emp} from={currentMonth()} /></h2>
+      <p className="muted small">Only admins see this. Pay isn't affected: {emp.name}'s name is highlighted on every page in the PIP months, and from the relieved month on.</p>
+      <ErrorNote>{error}</ErrorNote>
+      {notice && <p className="ok-text small" role="status">{notice}</p>}
+
+      <h3>Relieved</h3>
+      <form className="row" onSubmit={saveRelieved}>
+        <label>
+          <span>Relieved on</span>
+          <input type="date" value={relieved.on} onChange={(e) => setRelieved({ ...relieved, on: e.target.value })} required />
+        </label>
+        <label className="grow">
+          <span>Note (optional)</span>
+          <input value={relieved.note} maxLength={2000} onChange={(e) => setRelieved({ ...relieved, note: e.target.value })} placeholder="For example Resigned, last working day" />
+        </label>
+        <button className="secondary" type="submit">Save</button>
+        {emp.relieved_on && <button className="link danger" type="button" onClick={clearRelieved}>Clear</button>}
+      </form>
+      {emp.relieved_on && <p className="small"><span className="emp-tag emp-tag-relieved">Relieved</span> {dayLabel(emp.relieved_on)}{emp.relieved_note ? ` · ${emp.relieved_note}` : ''}</p>}
+
+      <h3>Performance improvement plans (PIP)</h3>
+      {emp.pips.length === 0 ? <p className="muted small">No PIPs.</p> : (
+        <div className="table-wrap">
+          <table className="grid list">
+            <thead>
+              <tr><th scope="col">From</th><th scope="col">To</th><th scope="col">Comment</th><th scope="col">Added by</th><th><span className="sr-only">Actions</span></th></tr>
+            </thead>
+            <tbody>
+              {emp.pips.map((p) => (
+                <tr key={p.id} className={p.from_month <= currentMonth() && p.to_month >= currentMonth() ? 'cell-pip' : undefined}>
+                  <td>{monthLabel(p.from_month)}</td>
+                  <td>{monthLabel(p.to_month)}</td>
+                  <td className="small">{p.comment || <span className="muted">–</span>}</td>
+                  <td className="small muted">{p.added_by} · {p.added_at.slice(0, 10)}</td>
+                  <td className="row-actions small">
+                    <button className="link" onClick={() => setPip({ id: p.id, from_month: p.from_month, to_month: p.to_month, comment: p.comment || '' })}>Edit</button>
+                    <button className="link danger" onClick={() => removePip(p)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <form className="row" onSubmit={savePip}>
+        <label className="month-field">
+          <span>{pip.id ? 'Edit PIP: from' : 'Add a PIP: from'}</span>
+          <input type="month" value={pip.from_month} required onChange={(e) => setPip({ ...pip, from_month: e.target.value, to_month: pip.to_month || e.target.value })} />
+        </label>
+        <label className="month-field">
+          <span>To</span>
+          <input type="month" value={pip.to_month} min={pip.from_month} required onChange={(e) => setPip({ ...pip, to_month: e.target.value })} />
+        </label>
+        <label className="grow">
+          <span>Comment (optional)</span>
+          <input value={pip.comment} maxLength={2000} onChange={(e) => setPip({ ...pip, comment: e.target.value })} placeholder="Reason, goals or outcome" />
+        </label>
+        <button className="secondary" type="submit">{pip.id ? 'Save PIP' : 'Add PIP'}</button>
+        {pip.id && <button className="link" type="button" onClick={() => setPip(blankPip)}>Cancel</button>}
+      </form>
     </section>
   );
 }

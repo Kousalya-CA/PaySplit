@@ -580,6 +580,24 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_email ON employees(emai
 // Company employee ID (for example CA1023). Empty for employees added before it existed; unique.
 addEmployeeColumn('employee_code', 'TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_code ON employees(employee_code COLLATE NOCASE) WHERE employee_code IS NOT NULL');
+// Relieved: the date the employee was relieved (YYYY-MM-DD) and a note. Pay isn't affected; their
+// name is highlighted from that month on. Admins only.
+addEmployeeColumn('relieved_on', 'TEXT');
+addEmployeeColumn('relieved_note', 'TEXT');
+// Performance improvement plans: From and To months with a comment. An employee can have several
+// (they don't overlap). Pay isn't affected; their name is highlighted in those months. Admins only.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS employee_pips (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    from_month  TEXT NOT NULL,                   -- 'YYYY-MM'
+    to_month    TEXT NOT NULL,                   -- 'YYYY-MM', on or after from_month
+    comment     TEXT,
+    added_by    TEXT,
+    added_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_employee_pips_employee ON employee_pips(employee_id);
+`);
 
 // What's deployed at each customer. Anyone signed in can add one. services is a JSON array of
 // { name, version } (each service has its own version). features is no longer used (see

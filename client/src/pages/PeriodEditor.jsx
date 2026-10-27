@@ -1,3 +1,4 @@
+import { EmpTags, empFlags } from '../components/EmpStatus.jsx';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { money, moneyIn, currencySymbol, periodLabel, paidIn, pct, toPctInput, parseNum, monthLabel, dayLabel, addMonths, quarterLabel, payoutStatusLabel, RATINGS, ratingLabel } from '../format.js';
@@ -324,6 +325,9 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
   // The saved contributors of one month (for paid marks).
   const savedIn = (k) => period.allocations.filter((a) => (a.part ?? 0) === k);
   const activeMonth = multi ? months[activeKey - 1] : null;
+  // PIP / Relieved tags for the month being edited (pay isn't affected).
+  const monthKey = multi ? activeMonth : (payout.pay_month || period.start_month);
+  const tagsOf = (id) => <EmpTags emp={employees.find((e) => String(e.id) === String(id))} from={monthKey} />;
 
   return (
     <div className="period">
@@ -487,6 +491,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
             ids={ratingIds}
             ratings={ratingsHere}
             nameOf={nameOf}
+            tagsOf={tagsOf}
             rows={rows}
             stats={stats}
             fmt={fmt}
@@ -501,7 +506,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
       )}
 
       {step === 'review' && (
-        <RatingReview month={multi ? monthLabel(activeMonth) : null} ids={ratingIds} ratings={ratingsHere} nameOf={nameOf}
+        <RatingReview month={multi ? monthLabel(activeMonth) : null} ids={ratingIds} ratings={ratingsHere} nameOf={nameOf} tagsOf={tagsOf}
           rows={rows} stats={stats} fmt={fmt} onEdit={(i) => { setStep('ratings'); setRatingAt(i); }} onBack={() => goStep('ratings')} />
       )}
 
@@ -515,6 +520,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
             stats={stats[cat]}
             rows={rows[cat]}
             employees={employees}
+            month={monthKey}
             onChange={(key, field, value) => updateRow(cat, key, field, value)}
             onAdd={() => addRow(cat)}
             onRemove={(key) => removeRow(cat, key)}
@@ -563,7 +569,7 @@ export default function PeriodEditor({ customer, period, prev, employees, onSave
 
 const paidSum = (period) => period.allocations.reduce((s, a) => s + (a.paid_on ? a.paid_amount : 0), 0);
 
-function CategoryTable({ category, share, stats, rows, employees, onChange, onAdd, onRemove, onEqual, fmt }) {
+function CategoryTable({ category, share, stats, rows, employees, month, onChange, onAdd, onRemove, onEqual, fmt }) {
   const anyPaidHere = rows.some((r) => r.locked);
   const { pool, sum } = stats;
   const over = sum > 100.01;
@@ -600,8 +606,9 @@ function CategoryTable({ category, share, stats, rows, employees, onChange, onAd
                       {employees
                         .filter((e) => (e.active || String(e.id) === r.employee_id))
                         .filter((e) => String(e.id) === r.employee_id || !chosen.includes(String(e.id)))
-                        .map((e) => <option key={e.id} value={e.id}>{e.name}{e.active ? '' : ' (inactive)'}</option>)}
+                        .map((e) => <option key={e.id} value={e.id}>{e.name}{e.active ? '' : ' (inactive)'}{empFlags(e, month).map((f) => ` · ${f.label}`).join('')}</option>)}
                     </select>
+                    <EmpTags emp={employees.find((e) => String(e.id) === r.employee_id)} from={month} />
                   </td>
                   <td>
                     <span className="suffix-input small-input">
@@ -668,7 +675,7 @@ const rolesText = (roles, fmt) => roles.map((x) => `${x.cat} ${pct(x.weightage)}
 
 // Step 2: one employee at a time. A rating (1 Exceptional to 5 Unsatisfactory) and a comment with
 // specific instances; Next needs both. A rating whose pay is in a payout is read-only.
-function RatingCard({ month, index, ids, ratings, nameOf, rows, stats, fmt, previous, onChange, onJump, onBack, onNext, setError }) {
+function RatingCard({ month, index, ids, ratings, nameOf, tagsOf, rows, stats, fmt, previous, onChange, onJump, onBack, onNext, setError }) {
   const id = ids[index];
   const r = ratings[id] || {};
   const locked = Boolean(r.locked);
@@ -689,7 +696,7 @@ function RatingCard({ month, index, ids, ratings, nameOf, rows, stats, fmt, prev
           ))}
         </div>
       </div>
-      <h3>{nameOf(id)}</h3>
+      <h3>{nameOf(id)}{tagsOf(id)}</h3>
       <p className="muted small">{rolesText(rolesOf(id, rows, stats), fmt)}</p>
       {locked && <p className="muted small">🔒 In a quarterly payout, so this rating can't be changed.</p>}
       <fieldset className="rating-options" disabled={locked}>
@@ -724,7 +731,7 @@ function RatingCard({ month, index, ids, ratings, nameOf, rows, stats, fmt, prev
 }
 
 // Step 3: the month's weightages with each rating and comment, before saving.
-function RatingReview({ month, ids, ratings, nameOf, rows, stats, fmt, onEdit, onBack }) {
+function RatingReview({ month, ids, ratings, nameOf, tagsOf, rows, stats, fmt, onEdit, onBack }) {
   if (!ids.length) return <p className="muted">No contributors to review yet.</p>;
   return (
     <section className="rating-review">
@@ -739,7 +746,7 @@ function RatingReview({ month, ids, ratings, nameOf, rows, stats, fmt, onEdit, o
               const r = ratings[id];
               return (
                 <tr key={id}>
-                  <th scope="row">{nameOf(id)}</th>
+                  <th scope="row">{nameOf(id)}{tagsOf(id)}</th>
                   <td className="small">{rolesText(rolesOf(id, rows, stats), fmt)}</td>
                   <td className={isRated(r) ? '' : 'warn-text'}>{isRated(r) ? ratingLabel(r.rating) : 'Not rated'}</td>
                   <td className="small">{r?.comment || <span className="muted">–</span>}</td>

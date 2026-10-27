@@ -31,7 +31,7 @@ export default function Shell({ user, onLogout }) {
   if (section === 'customers' && id && sub === 'deployments' && isAdmin) page = <CustomerDeployments key={id} customerId={Number(id)} user={user} />;
   else if (section === 'customers' && id && isAdmin) page = <CustomerDetail key={id} id={Number(id)} />;
   else if (section === 'customers' && isAdmin) page = <CustomersPage />;
-  else if (section === 'employees' && id) page = <EmployeeDetail key={id} id={Number(id)} />;
+  else if (section === 'employees' && id) page = <EmployeeDetail key={id} id={Number(id)} isAdmin={isAdmin} />;
   else if (section === 'employees') page = <EmployeesPage isAdmin={isAdmin} />;
   else if (section === 'azure-devops' && isAdmin) page = <AzureDevOpsPage />;
   else if (section === 'deployments') page = <DeploymentsPage user={user} customerId={id ? Number(id) : null} />;

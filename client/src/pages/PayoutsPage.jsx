@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { moneyIn, monthLabel, dayLabel, quarterLabel, payoutStatusLabel, ratingLabel, pct } from '../format.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
+import { EmpName, EmpTags, useEmployeeMap } from '../components/EmpStatus.jsx';
 
 // Quarterly payouts (admins). Pay for a month belongs to its calendar quarter and is paid in the pay
 // month (N months after the quarter ends). For a quarter: write a comment for each employee and
@@ -133,6 +134,7 @@ function QuarterPayout({ quarter, user }) {
   const [comments, setComments] = useState({}); // employee id -> comment being typed
   const [paidOn, setPaidOn] = useState(todayIso());
   const [open, setOpen] = useState(() => new Set());
+  const emps = useEmployeeMap(); // PIP / Relieved highlights
 
   const load = () => api.payouts.get(quarter).then((d) => {
     setData(d);
@@ -197,7 +199,7 @@ function QuarterPayout({ quarter, user }) {
     return [...by].map(([currency, amount]) => ({ currency, amount }));
   };
 
-  const Breakdown = ({ items, currency, colSpan }) => (
+  const Breakdown = ({ items, currency, colSpan, emp }) => (
     <tr className="drill-row">
       <td colSpan={colSpan}>
         <table className="alloc payout-items">
@@ -207,7 +209,7 @@ function QuarterPayout({ quarter, user }) {
           <tbody>
             {byPayment(items).map((g) => (
               <tr key={g.key}>
-                <td>{monthLabel(g.month)}{g.carried && <span className="tag">Carried over</span>}</td>
+                <td>{monthLabel(g.month)}{g.carried && <span className="tag">Carried over</span>}<EmpTags emp={emp} from={g.month} /></td>
                 <td><a href={`#/customers/${g.customer_id}`}>{g.customer}</a></td>
                 <td className="small">{g.roles.join(' · ')}</td>
                 <td className="num">{moneyIn(g.amount, currency)}</td>
@@ -303,7 +305,7 @@ function QuarterPayout({ quarter, user }) {
                       <tr>
                         <th scope="row">
                           <button type="button" className="drill" aria-expanded={open.has(key)} onClick={() => toggle(key)}>
-                            <span className="drill-caret" aria-hidden="true">▸</span>{g.employee}
+                            <span className="drill-caret" aria-hidden="true">▸</span><EmpName emp={emps.get(g.employee_id)} name={g.employee} from={data.from} to={data.to} />
                           </button>
                           {ratingSummary(g.items)}
                           {g.sent_back_reason && <div className="warn-text small">Submission undone by {g.sent_back_by}: {g.sent_back_reason}</div>}
@@ -316,7 +318,7 @@ function QuarterPayout({ quarter, user }) {
                             onBlur={() => saveComment(g.employee_id)} />
                         </td>
                       </tr>
-                      {open.has(key) && <Breakdown items={g.items} currency={g.currency} colSpan={3} />}
+                      {open.has(key) && <Breakdown items={g.items} currency={g.currency} colSpan={3} emp={emps.get(g.employee_id)} />}
                     </Fragment>
                   );
                 })}
@@ -391,7 +393,7 @@ function QuarterPayout({ quarter, user }) {
                       <tr>
                         <th scope="row">
                           <button type="button" className="drill" aria-expanded={open.has(key)} onClick={() => toggle(key)}>
-                            <span className="drill-caret" aria-hidden="true">▸</span>{l.employee}
+                            <span className="drill-caret" aria-hidden="true">▸</span><EmpName emp={emps.get(l.employee_id)} name={l.employee} from={data.from} to={data.to} />
                           </button>
                           {ratingSummary(l.items)}
                         </th>
@@ -429,7 +431,7 @@ function QuarterPayout({ quarter, user }) {
                           )}
                         </td>
                       </tr>
-                      {open.has(key) && <Breakdown items={l.items} currency={l.currency} colSpan={5} />}
+                      {open.has(key) && <Breakdown items={l.items} currency={l.currency} colSpan={5} emp={emps.get(l.employee_id)} />}
                       {open.has(key) && <LineHistory employeeId={l.employee_id} colSpan={5} />}
                     </Fragment>
                   );

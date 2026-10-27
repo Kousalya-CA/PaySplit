@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { moneyList } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
+import { EmpTags, thisMonth } from '../components/EmpStatus.jsx';
 
 // Admins manage everyone. An Employee login sees only their own row (the server filters it).
 export default function EmployeesPage({ isAdmin }) {
@@ -162,7 +163,7 @@ export default function EmployeesPage({ isAdmin }) {
                       </select>
                     ) : emp.type}
                   </td>
-                  <td>{emp.active ? 'Active' : 'Inactive'}</td>
+                  <td>{emp.active ? 'Active' : 'Inactive'}<EmpTags emp={emp} from={thisMonth()} /></td>
                   <td className="num">{emp.split_count}</td>
                   <td className="num">{moneyList(emp.pay || []) || <Money value={0} />}</td>
                   {isAdmin && (

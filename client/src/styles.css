@@ -460,3 +460,17 @@ a.secondary { display: inline-block; text-decoration: none; }
 .line-history-title { font-size: 0.95rem; margin: 4px 0; }
 .line-history { margin: 0; padding-left: 20px; }
 .line-history li { margin: 2px 0; }
+
+/* Employees on a PIP (amber) or relieved (red), in those months. Admins only. */
+.emp-flagged { border-radius: .3rem; padding: 0 .25rem; }
+.emp-pip { background: #fff1d6; box-shadow: inset 0 -2px 0 #e0a100; }
+.emp-relieved { background: #fde4e1; box-shadow: inset 0 -2px 0 var(--danger); }
+.emp-pip.emp-relieved { background: linear-gradient(90deg, #fff1d6 50%, #fde4e1 50%); }
+.emp-tag { margin-left: .35rem; font-size: .7rem; font-weight: 800; padding: .02rem .4rem; border-radius: 1rem; white-space: nowrap; vertical-align: middle; }
+.emp-tag-pip { background: #e0a100; color: #fff; }
+.emp-tag-relieved { background: var(--danger); color: #fff; }
+td.cell-pip, tr.cell-pip td { background: #fff7e6; }
+td.cell-relieved { background: #fdeceb; }
+td.cell-pip.cell-relieved { background: linear-gradient(90deg, #fff7e6 50%, #fdeceb 50%); }
+.emp-status { margin: 1rem 0 1.5rem; }
+.emp-status h3 { font-size: 1rem; margin: 1rem 0 .4rem; }

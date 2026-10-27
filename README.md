@@ -90,7 +90,7 @@ Open http://localhost:5173.
 | Summary       | Pay by month and by year for every employee, plus revenue that isn't assigned |
 | Customers     | Add customers (Yearly or Monthly) and set the Direct / Support / Others split |
 | Customer page | Pick a period, enter revenue, add contributors and weightages, then save     |
-| Employees     | Add, rename, and mark employees active or inactive                          |
+| Employees     | Add, rename, and mark employees active or inactive. Admins set a **relieved date** and **PIPs** (From/To months, several allowed) on the employee page; pay isn't affected, but the name is highlighted on every page in PIP months (amber) and from the relieved month on (red) |
 | All payments  | Every payment row, with filters and a CSV download                         |
 | Deployments   | Everyone: what's deployed at each customer (product, service versions, features, environment) |
 | Users         | Admins only: add people as Admin or Employee, send setup links, remove access |
@@ -172,7 +172,8 @@ client/src/
 ```
 users                    id, name, email, role (admin/employee), is_owner, last_login_at, setup link
 sessions                 login sessions
-employees                id, employee_code, name, email, active, type
+employees                id, employee_code, name, email, active, type, relieved_on, relieved_note
+employee_pips            employee, from_month, to_month, comment, added_by (admins only; no overlaps)
 customers                id, name, onboard_month, frequency, currency, azdo_client
 shares                   id, customer_id, name, from_month, to_month, payment_month, direct_pct, support_pct, others_pct, payout_type,
                          pay_from, pay_to (custom payout months for the first payment)
