@@ -44,7 +44,7 @@ It works the same way as the workbook:
    and submits it (the amounts are frozen and that pay is locked on the payment pages); a **different
    admin approves** each employee's line, or all at once (the page lists the admins, and each waiting line shows who can approve it). **Approvals needed** on the Payouts page sets how many: 0 (lines are approved when submitted), 1 (default) or 2 different admins, never the one who submitted; lowering it approves waiting lines that already have enough. Then the
    approved lines are marked paid with the payroll date. Until paid, an approval can be undone (the line
-   waits for approval again) and a submission undone (its pay is back in To submit), each with a comment;
+   waits for approval again) and a submission undone (its pay is back in To submit), each with a comment; a line marked paid by mistake can be set back to approved with Undo paid (one line, or all paid lines in the quarter), also with a comment;
    the quarter's **History** shows every step, who did it and the comment, and opening a line shows its own submission and approval history. Pay added later for a quarter that's already
    paid goes into the next quarter. Employees see their own statements and comments on My pay, and
    their ratings and rating comments once the line is approved. Opening an employee on the Payouts page

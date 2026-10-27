@@ -390,7 +390,7 @@ db.exec(`
     employee_id INTEGER NOT NULL REFERENCES employees(id),
     currency    TEXT NOT NULL,
     amount      REAL NOT NULL,
-    action      TEXT NOT NULL,                   -- submitted, approval (1 of 2), approved, undo_approve, undo_submit, paid
+    action      TEXT NOT NULL,                   -- submitted, approval (1 of 2), approved, undo_approve, undo_submit, paid, undo_paid
     comment     TEXT,
     by_name     TEXT,
     at          TEXT NOT NULL DEFAULT (datetime('now'))

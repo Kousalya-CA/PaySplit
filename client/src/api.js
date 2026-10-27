@@ -95,6 +95,8 @@ export const api = {
     undoSubmit: (lineId, comment) => request(`/payout-lines/${lineId}/undo-submit`, { method: 'POST', body: { comment } }),
     markPaid: (lineId, paidOn) => request(`/payout-lines/${lineId}/paid`, { method: 'POST', body: { paid_on: paidOn } }),
     markAllPaid: (quarter, paidOn) => request(`/payouts/${quarter}/paid`, { method: 'POST', body: { paid_on: paidOn } }),
+    undoPaid: (lineId, comment) => request(`/payout-lines/${lineId}/undo-paid`, { method: 'POST', body: { comment } }),
+    undoAllPaid: (quarter, comment) => request(`/payouts/${quarter}/undo-paid`, { method: 'POST', body: { comment } }),
     saveSettings: (payLag, approvalsRequired) => request('/payout-settings', { method: 'PUT', body: { pay_lag: payLag, approvals_required: approvalsRequired } }),
     mine: () => request('/my/statements'),
   },

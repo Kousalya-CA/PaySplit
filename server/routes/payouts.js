@@ -3,7 +3,8 @@
 // employee and submits the quarter (amounts are frozen); other admins approve each employee's line
 // (or all at once): 0, 1 or 2 approvals as set ('approvals_required'), never by the admin who
 // submitted it; then lines are marked paid with the payroll date. Until paid, an approval can
-// be undone (back to submitted) and a submission undone (back to "to submit"), each with a comment.
+// be undone (back to submitted), a submission undone (back to "to submit") and a payment undone (back
+// to approved), each with a comment.
 // Every step is written to payout_log with its comment.
 // Employees see their own submitted statements. See payout_* tables in db.js.
 import { db, transaction } from '../db.js';
@@ -64,6 +65,7 @@ const q = {
   submittedLines: db.prepare(`SELECT l.*, r.quarter, e.name AS employee FROM payout_lines l JOIN payout_runs r ON r.id = l.run_id
     JOIN employees e ON e.id = l.employee_id WHERE l.status = 'submitted'`),
   paid: db.prepare("UPDATE payout_lines SET status = 'paid', paid_on = ?, paid_by = ? WHERE id = ? AND status = 'approved'"),
+  unpaid: db.prepare("UPDATE payout_lines SET status = 'approved', paid_on = NULL, paid_by = NULL WHERE id = ? AND status = 'paid'"),
   unapprove: db.prepare(`UPDATE payout_lines SET status = 'submitted', approved_by_id = NULL, approved_by = NULL, approved_at = NULL,
     approver_comment = NULL WHERE id = ? AND status IN ('submitted', 'approved')`),
   deleteLine: db.prepare('DELETE FROM payout_lines WHERE id = ?'),
@@ -406,6 +408,33 @@ export function registerPayoutRoutes(router) {
       }
     });
     return { ok: true, paid: lines.length };
+  }, admin);
+
+  // Undo "paid" (with a comment): the line is approved and not paid again. For a line marked paid by mistake.
+  router.post('/api/payout-lines/:id/undo-paid', ({ params, body, user }) => {
+    const line = requireLine(params.id);
+    if (line.status !== 'paid') throw new HttpError(409, `${line.employee}'s line is ${line.status}, not paid.`);
+    const comment = requireComment(body, 'payment');
+    transaction(() => {
+      q.unpaid.run(line.id);
+      logLine(line, 'undo_paid', comment, user);
+    });
+    return { ok: true };
+  }, admin);
+
+  // Undo "paid" on every paid line in a quarter, with one comment.
+  router.post('/api/payouts/:quarter/undo-paid', ({ params, body, user }) => {
+    const quarter = requireQuarter(params.quarter);
+    const lines = (state().linesBy.get(quarter) || []).filter((l) => l.status === 'paid');
+    if (!lines.length) throw new HttpError(400, 'No paid lines in this quarter.');
+    const comment = requireComment(body, 'payment');
+    transaction(() => {
+      for (const l of lines) {
+        q.unpaid.run(l.id);
+        logLine(l, 'undo_paid', comment, user);
+      }
+    });
+    return { ok: true, undone: lines.length };
   }, admin);
 
   router.put('/api/payout-settings', ({ body, user }) => {

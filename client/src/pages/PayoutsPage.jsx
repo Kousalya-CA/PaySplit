@@ -24,7 +24,7 @@ const approvalRule = (n) => (n === 0
   : n === 1
     ? 'one submits, and any other admin approves (1 approval).'
     : 'one submits, and two other admins each approve (2 approvals, from two different admins).');
-const historyLabel = { submitted: 'Submitted', approval: 'Approval added', approved: 'Approved', undo_approve: 'Approval undone', undo_submit: 'Submission undone', paid: 'Paid' };
+const historyLabel = { submitted: 'Submitted', approval: 'Approval added', approved: 'Approved', undo_approve: 'Approval undone', undo_submit: 'Submission undone', paid: 'Paid', undo_paid: 'Payment undone' };
 // A line's breakdown grouped by payment month: each customer once, with the employee's categories
 // and weightages, the amount, and their rating and comment.
 const byPayment = (items) => {
@@ -178,11 +178,19 @@ function QuarterPayout({ quarter, user }) {
     act(`line-${line.id}`, () => fn(line.id, comment), done);
   };
   const undoApprove = (line) => undo(line, 'approval', api.payouts.undoApprove, `${line.employee}'s approval was undone; it's waiting for approval again.`);
+  const undoPaid = (line) => undo(line, 'payment', api.payouts.undoPaid, `${line.employee} is back to approved, not paid.`);
+  const undoAllPaid = () => {
+    const comment = window.prompt(`Undo "paid" on all ${paidLines.length} paid lines in ${quarterLabel(quarter)}? They go back to approved. Add a comment saying why:`, '');
+    if (comment === null) return;
+    if (!comment.trim()) { setError('Add a comment saying why the payment is undone.'); return; }
+    act('unpaid-all', () => api.payouts.undoAllPaid(quarter, comment), (r) => `${r.undone} line${r.undone === 1 ? ' is' : 's are'} back to approved, not paid.`);
+  };
   const undoSubmit = (line) => undo(line, 'submission', api.payouts.undoSubmit, `${line.employee}'s submission was undone; it's back in To submit.`);
 
   const submitted = data.lines.filter((l) => l.status === 'submitted');
   const approvable = submitted.filter((l) => l.can_approve);
   const approved = data.lines.filter((l) => l.status === 'approved');
+  const paidLines = data.lines.filter((l) => l.status === 'paid');
   const totals = (rows) => {
     const by = new Map();
     for (const r of rows) by.set(r.currency, (by.get(r.currency) || 0) + r.amount);
@@ -361,6 +369,11 @@ function QuarterPayout({ quarter, user }) {
                 </button>
               </>
             )}
+            {paidLines.length > 0 && (
+              <button className="link danger" disabled={busy !== ''} onClick={undoAllPaid}>
+                {busy === 'unpaid-all' ? 'Saving…' : `Undo paid (${paidLines.length})`}
+              </button>
+            )}
           </div>
           <div className="table-wrap">
             <table className="grid list">
@@ -410,6 +423,7 @@ function QuarterPayout({ quarter, user }) {
                             </button>
                           )}
                           {l.status === 'submitted' && <button className="link danger" disabled={busy !== ''} onClick={() => undoSubmit(l)}>Undo submit</button>}
+                          {l.status === 'paid' && <button className="link danger" disabled={busy !== ''} onClick={() => undoPaid(l)}>Undo paid</button>}
                           {(l.status === 'approved' || (l.status === 'submitted' && l.approvals.length > 0)) && (
                             <button className="link danger" disabled={busy !== ''} onClick={() => undoApprove(l)}>Undo approve</button>
                           )}
