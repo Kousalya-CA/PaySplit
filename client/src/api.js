@@ -48,6 +48,10 @@ export const api = {
     removePip: (pipId) => request(`/pips/${pipId}`, { method: 'DELETE' }),
   },
   sow: (month, refresh) => request(`/sow?month=${encodeURIComponent(month || '')}${refresh ? '&refresh=1' : ''}`),
+  timeLog: {
+    log: (taskId, body) => request(`/tasks/${taskId}/log`, { method: 'POST', body }),
+    undo: (logId) => request(`/time-logs/${logId}/undo`, { method: 'POST' }),
+  },
   holidays: {
     add: (day, name) => request('/holidays', { method: 'POST', body: { day, name } }),
     remove: (id) => request(`/holidays/${id}`, { method: 'DELETE' }),

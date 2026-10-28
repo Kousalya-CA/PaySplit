@@ -504,3 +504,15 @@ td.cell-pip.cell-relieved { background: linear-gradient(90deg, #fff7e6 50%, #fde
 .sow-capacity { padding-top: .35rem; border-top: 1px solid var(--line); }
 .sow-holidays h3 { font-size: 1rem; margin: .6rem 0 0; }
 label.check { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; }
+
+/* SOW Tracker: time logging and estimate flags. */
+.sow-flag { margin-left: .4rem; font-size: .7rem; font-weight: 800; padding: .02rem .45rem; border-radius: 1rem; white-space: nowrap; vertical-align: middle; }
+.sow-flag.no-eta { background: var(--danger); color: #fff; }
+.sow-flag.overrun { background: #e0a100; color: #fff; }
+.wi-table tr.row-no-eta th, .wi-table tr.row-no-eta td { background: #fdf0ee; }
+.wi-table tr.row-overrun th, .wi-table tr.row-overrun td { background: #fff4dc; }
+.sow-log-btn { margin-left: .5rem; }
+.sow-log-row > td { background: var(--paper); }
+.sow-log { display: grid; gap: .4rem; padding: .4rem 0; }
+.sow-log p { margin: 0; }
+.sow-log-history { max-width: 46rem; }

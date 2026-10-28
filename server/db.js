@@ -129,6 +129,28 @@ db.exec(`
     added_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_employee_leaves_employee ON employee_leaves(employee_id);
+  -- Time logged from the SOW Tracker on an Azure DevOps Task or Bug: hours worked on a day, and the
+  -- task's Completed / Remaining Work before and after (written to Azure DevOps with the shared PAT,
+  -- with a comment naming the person). An undone log is kept with undone_at.
+  CREATE TABLE IF NOT EXISTS time_logs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id          INTEGER NOT NULL,              -- Azure DevOps work item id
+    task_title       TEXT,
+    email            TEXT,                          -- the task's assignee (lower case)
+    assignee         TEXT,
+    day              TEXT NOT NULL,                 -- 'YYYY-MM-DD' worked
+    hours            REAL NOT NULL,
+    completed_before REAL, completed_after REAL,
+    remaining_before REAL, remaining_after REAL,
+    original_set     REAL,                          -- Original Estimate set with this log (it had none)
+    note             TEXT,
+    logged_by        TEXT,
+    logged_by_id     INTEGER,
+    at               TEXT NOT NULL DEFAULT (datetime('now')),
+    undone_at        TEXT,
+    undone_by        TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_time_logs_task ON time_logs(task_id);
   CREATE TABLE IF NOT EXISTS azdo_iterations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     area_id     INTEGER NOT NULL REFERENCES azdo_areas(id) ON DELETE CASCADE,

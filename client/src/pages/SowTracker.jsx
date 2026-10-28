@@ -27,6 +27,107 @@ function leaveIn(cal, leaves, email) {
   }
   return out;
 }
+// Log hours worked on a Task or Bug: Completed goes up by the hours and Remaining down (never below 0),
+// unless a new Remaining is typed. A task with no estimate needs one first. Earlier logs can be undone.
+function LogTime({ task, logs, allLogs, holidays, leaves, hpd, isAdmin, userId, onDone, onError }) {
+  const [day, setDay] = useState(today());
+  const [worked, setWorked] = useState('');
+  const [remaining, setRemaining] = useState('');
+  const [original, setOriginal] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const h = Number(worked) || 0;
+  const startRemaining = task.remaining || Math.max(0, (task.original || Number(original) || 0) - task.completed);
+  const autoRemaining = Math.max(0, startRemaining - h);
+  // Warnings: not a working day, on leave, or more than a day's hours logged for this person.
+  const dow = new Date(`${day}T00:00:00Z`).getUTCDay();
+  const holiday = holidays.find((x) => x.day === day);
+  const onLeave = leaveOn(leaves, task.assignedEmail, day);
+  const dayTotal = allLogs.filter((l) => l.email === task.assignedEmail && l.day === day).reduce((n, l) => n + l.hours, 0) + h;
+  const warnings = [
+    dow === 0 || dow === 6 ? 'That day is a weekend.' : '',
+    holiday ? `That day is a holiday (${holiday.name}).` : '',
+    onLeave ? `${task.assignedTo || 'They'} ${onLeave < 1 ? 'had a half day of leave' : 'were on leave'} that day.` : '',
+    dayTotal > hpd ? `That makes ${hours(dayTotal)} h logged for ${task.assignedTo || 'them'} on that day (a day is ${hpd} h).` : '',
+  ].filter(Boolean);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    onError('');
+    try {
+      const r = await api.timeLog.log(task.id, { day, hours: h, remaining: remaining === '' ? null : Number(remaining), original: task.noEstimate ? Number(original) : null, note });
+      onDone(`Logged ${h} h on ${task.id}: completed ${hours(r.completed)} h, remaining ${hours(r.remaining)} h (updated in Azure DevOps).`);
+    } catch (err) { onError(err.message); } finally { setBusy(false); }
+  };
+  const undo = async (l) => {
+    if (!window.confirm(`Undo ${l.hours} h logged by ${l.logged_by} for ${dayLabel(l.day)}? Azure DevOps is updated back.`)) return;
+    setBusy(true);
+    onError('');
+    try {
+      const r = await api.timeLog.undo(l.id);
+      onDone(`Undone: ${task.id} is back to completed ${hours(r.completed)} h, remaining ${hours(r.remaining)} h.`);
+    } catch (err) { onError(err.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="sow-log">
+      <p className="small">
+        <strong>Log time · {task.id} {task.title}</strong>
+        <span className="muted"> · Est {hours(task.original)} h · Done {hours(task.completed)} h · Left {hours(task.remaining)} h · {task.assignedTo || 'Unassigned'}</span>
+      </p>
+      <form className="row" onSubmit={submit}>
+        {task.noEstimate && (
+          <label>
+            <span>Original estimate (h)</span>
+            <input type="number" min="0.25" step="0.25" value={original} required onChange={(e) => setOriginal(e.target.value)} />
+          </label>
+        )}
+        <label>
+          <span>Date</span>
+          <input type="date" value={day} max={today()} required onChange={(e) => setDay(e.target.value)} />
+        </label>
+        <label>
+          <span>Hours worked</span>
+          <input type="number" min="0.25" max="24" step="0.25" value={worked} required autoFocus onChange={(e) => setWorked(e.target.value)} />
+        </label>
+        <label>
+          <span>Remaining after</span>
+          <input type="number" min="0" step="0.25" value={remaining} placeholder={`${hours(autoRemaining)} (auto)`} onChange={(e) => setRemaining(e.target.value)} />
+        </label>
+        <label className="grow">
+          <span>Note (optional)</span>
+          <input value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} placeholder="What you worked on" />
+        </label>
+        <button className="primary" type="submit" disabled={busy || h <= 0}>{busy ? 'Saving…' : `Log ${h ? hours(h) : ''} h`}</button>
+      </form>
+      {h > 0 && (
+        <p className="small muted">
+          Completed {hours(task.completed)} → <strong>{hours(task.completed + h)} h</strong> · Remaining {hours(startRemaining)} → <strong>{hours(remaining === '' ? autoRemaining : Number(remaining))} h</strong>
+          {remaining === '' && startRemaining - h < 0 && <span className="warn-text"> (worked past the estimate: remaining stays 0 until the task is closed or re-estimated)</span>}
+        </p>
+      )}
+      {warnings.map((w) => <p key={w} className="warn-text small">⚠ {w}</p>)}
+      {logs.length > 0 && (
+        <table className="grid list sow-log-history">
+          <thead><tr><th scope="col">Date</th><th scope="col" className="num">Hours</th><th scope="col">By</th><th scope="col">Note</th><th><span className="sr-only">Actions</span></th></tr></thead>
+          <tbody>
+            {logs.map((l) => (
+              <tr key={l.id}>
+                <td>{dayLabel(l.day)}</td>
+                <td className="num">{hours(l.hours)}</td>
+                <td className="small">{l.logged_by}</td>
+                <td className="small">{l.note || <span className="muted">–</span>}</td>
+                <td className="row-actions small">{(isAdmin || l.logged_by_id === userId) && <button className="link danger" disabled={busy} onClick={() => undo(l)}>Undo</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 const days = (n) => `${+n.toFixed(1)} day${n === 1 ? '' : 's'}`;
 
 // A sprint's days: from the earliest start to the latest finish of the sprints shown (the calendar month
@@ -59,7 +160,7 @@ function sprintCalendar(sprints, month, holidays) {
 
 // SOW Tracker (everyone): pick a sprint, then see its User Stories and Issues grouped by their Bucket
 // (in the picklist's order), each with its Tasks and Bugs. Read from Azure DevOps; nothing is changed.
-export default function SowTracker({ isAdmin }) {
+export default function SowTracker({ isAdmin, user }) {
   const [month, setMonth] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -76,6 +177,7 @@ export default function SowTracker({ isAdmin }) {
   const [person, setPerson] = useState(''); // assignee email
   const [staff, setStaff] = useState(null); // employees, for adding leave (admins)
   const [newLeave, setNewLeave] = useState({ employee_id: '', from_day: '', to_day: '', half: false, note: '' });
+  const [logging, setLogging] = useState(null); // task id with the Log time form open
 
   const load = (m, refresh = false) => {
     setLoading(true);
@@ -130,12 +232,19 @@ export default function SowTracker({ isAdmin }) {
       closed: items.filter((i) => i.closed).length,
       tasks: kids.length,
       tasksClosed: kids.filter((c) => c.closed).length,
+      noEstimate: kids.filter((c) => c.noEstimate && !c.closed).length,
+      overrun: kids.filter((c) => c.overrun).length,
       original: sum('original'),
       completed: sum('completed'),
       remaining: sum('remaining'),
     };
   };
   const total = stats(buckets.flatMap((b) => b.items));
+  // Time logged (from this app) on the sprint's tasks; who can log on a task.
+  const logs = data.logs || [];
+  const myEmail = String(user?.email || '').toLowerCase();
+  const canLog = (c) => isAdmin || (c.assignedEmail && c.assignedEmail === myEmail);
+  const loggedToday = logs.filter((l) => l.day === today() && (!person || l.email === person)).reduce((n, l) => n + l.hours, 0);
   // Business Impact and Effort Size columns (on User Stories and Issues), when Azure DevOps has them.
   const showImpact = Boolean(data.columns?.businessImpact);
   const showEffort = Boolean(data.columns?.effortSize);
@@ -258,6 +367,7 @@ export default function SowTracker({ isAdmin }) {
       )}
 
       <ErrorNote>{error}</ErrorNote>
+      {notice && <p className="ok-text small" role="status">{notice}</p>}
       {loading && <Loading />}
       {data.message ? <div className="empty"><p>{data.message}</p></div> : (
         <>
@@ -349,6 +459,9 @@ export default function SowTracker({ isAdmin }) {
             {' '}{total.closed} closed ({percent(total.closed, total.items)}%) · {total.tasks} tasks and bugs, {total.tasksClosed} closed ·
             {' '}Estimated {hours(total.original)} h · Completed {hours(total.completed)} h · Remaining {hours(total.remaining)} h
             {data.fetchedAt && <span className="muted"> · Read {new Date(data.fetchedAt).toLocaleTimeString()}</span>}
+            {total.noEstimate > 0 && <span className="sow-flag no-eta">{total.noEstimate} open task{total.noEstimate === 1 ? '' : 's'} with no estimate</span>}
+            {total.overrun > 0 && <span className="sow-flag overrun">{total.overrun} with 0 h left but not closed</span>}
+            {loggedToday > 0 && <span> · Logged today {person ? `by ${peopleNames.get(person)}` : ''}: <strong>{hours(loggedToday)} h</strong></span>}
           </p>
 
           {buckets.length === 0 ? (
@@ -365,6 +478,8 @@ export default function SowTracker({ isAdmin }) {
                     {st.items} item{st.items === 1 ? '' : 's'} · {st.closed} closed
                     <span className="wi-bar sow-bar" role="img" aria-label={`${percent(st.closed, st.items)}% closed`}><span style={{ width: `${percent(st.closed, st.items)}%` }} /></span>
                     {percent(st.closed, st.items)}% · {st.tasks} tasks/bugs · Est {hours(st.original)} h · Done {hours(st.completed)} h · Left {hours(st.remaining)} h
+                    {st.noEstimate > 0 && <span className="sow-flag no-eta">{st.noEstimate} no estimate</span>}
+                    {st.overrun > 0 && <span className="sow-flag overrun">{st.overrun} 0 h left · not closed</span>}
                   </span>
                 </button>
                 {open && (
@@ -406,9 +521,20 @@ export default function SowTracker({ isAdmin }) {
                                 <td className="num">{hours(i.hours.remaining)}</td>
                               </tr>
                               {shown && i.children.map((c) => (
-                                <tr key={c.id} className="wi-child">
+                                <Fragment key={c.id}>
+                                <tr className={`wi-child${c.overrun ? ' row-overrun' : c.noEstimate && !c.closed ? ' row-no-eta' : ''}`}>
                                   <th scope="row" className="wi-title" title={`${c.id} ${c.title}`}>
                                     <a href={c.url} target="_blank" rel="noreferrer">{c.id}</a> {c.title}
+                                    {c.noEstimate && !c.closed && <span className="sow-flag no-eta">No estimate</span>}
+                                    {c.overrun && <span className="sow-flag overrun">0 h left · not closed</span>}
+                                    {canLog(c) && (
+                                      <button className="link small sow-log-btn" onClick={() => setLogging(logging === c.id ? null : c.id)}>
+                                        {logging === c.id ? 'Close' : 'Log time'}
+                                      </button>
+                                    )}
+                                    {logs.some((l) => l.task_id === c.id) && logging !== c.id && (
+                                      <small className="muted"> · {hours(logs.filter((l) => l.task_id === c.id).reduce((n, l) => n + l.hours, 0))} h logged here</small>
+                                    )}
                                   </th>
                                   <td>{c.type}</td>
                                   <td className={c.closed ? 'ok-text' : ''}>{c.state}</td>
@@ -420,6 +546,16 @@ export default function SowTracker({ isAdmin }) {
                                   <td className="num">{hours(c.completed)}</td>
                                   <td className="num">{hours(c.remaining)}</td>
                                 </tr>
+                                {logging === c.id && (
+                                  <tr className="sow-log-row">
+                                    <td colSpan={8 + (showImpact ? 1 : 0) + (showEffort ? 1 : 0) + (clients.length > 0 ? 1 : 0)}>
+                                      <LogTime task={c} logs={logs.filter((l) => l.task_id === c.id)} allLogs={logs} holidays={holidays} leaves={leaves} hpd={hpd}
+                                        isAdmin={isAdmin} userId={user?.id}
+                                        onDone={(msg) => { setLogging(null); setNotice(msg); load(month); }} onError={setError} />
+                                    </td>
+                                  </tr>
+                                )}
+                                </Fragment>
                               ))}
                             </Fragment>
                           );
@@ -439,7 +575,6 @@ export default function SowTracker({ isAdmin }) {
           <span className="drill-caret" aria-hidden="true">▸</span>Holidays ({holidays.length}) &amp; leave ({leaves.length})
         </button>
       </h2>
-      {notice && <p className="ok-text small" role="status">{notice}</p>}
       {showHolidays && (
         <div className="sow-holidays">
           <p className="muted small">Saturdays and Sundays are always off. These company holidays apply to every team; working days and capacity leave them out. Leave is taken off that person's working days (pick them in Person to see theirs).</p>

@@ -1,6 +1,7 @@
 // Azure DevOps sprint board: settings (organisation, project, area paths and their sprints) and
 // each employee's work by month, found by their email: User Stories and Issues with their child
-// Tasks and Bugs. The SOW Tracker shows a sprint's User Stories and Issues grouped by their Bucket field.
+// Tasks and Bugs. Time logged on a Task or Bug (by its assignee or an admin) updates its Completed and
+// Remaining Work in Azure DevOps (the PAT needs Work Items Read & write). The SOW Tracker shows a sprint's User Stories and Issues grouped by their Bucket field.
 // The PAT is read from the AZ_PAT environment variable only; it's never stored or sent to the browser.
 import { db } from '../db.js';
 import { HttpError } from '../http.js';
@@ -29,6 +30,11 @@ const q = {
   holiday: db.prepare('SELECT * FROM holidays WHERE id = ?'),
   insertHoliday: db.prepare('INSERT INTO holidays (day, name, added_by) VALUES (?, ?, ?)'),
   deleteHoliday: db.prepare('DELETE FROM holidays WHERE id = ?'),
+  insertLog: db.prepare(`INSERT INTO time_logs (task_id, task_title, email, assignee, day, hours, completed_before, completed_after,
+    remaining_before, remaining_after, original_set, note, logged_by, logged_by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+  log: db.prepare('SELECT * FROM time_logs WHERE id = ?'),
+  undoLog: db.prepare("UPDATE time_logs SET undone_at = datetime('now'), undone_by = ? WHERE id = ? AND undone_at IS NULL"),
+  liveLogs: db.prepare('SELECT id, task_id, email, assignee, day, hours, note, logged_by, logged_by_id, at FROM time_logs WHERE undone_at IS NULL ORDER BY day, id'),
   leaves: db.prepare(`SELECT l.id, l.employee_id, e.name, LOWER(e.email) AS email, l.from_day, l.to_day, l.half, l.note, l.added_by
     FROM employee_leaves l JOIN employees e ON e.id = l.employee_id ORDER BY l.from_day, e.name`),
   leave: db.prepare('SELECT * FROM employee_leaves WHERE id = ?'),
@@ -67,17 +73,17 @@ function requireSettings() {
 }
 
 // Call the Azure DevOps REST API for the configured project. Errors become readable messages.
-async function azFetch(s, path, { method = 'GET', body, org = false } = {}) {
+async function azFetch(s, path, { method = 'GET', body, org = false, contentType = 'application/json', apiVersion = API_VERSION } = {}) {
   const sep = path.includes('?') ? '&' : '?';
   const scope = org ? encodeURIComponent(s.org) : `${encodeURIComponent(s.org)}/${encodeURIComponent(s.project)}`;
-  const url = `https://dev.azure.com/${scope}/_apis/${path}${sep}api-version=${API_VERSION}`;
+  const url = `https://dev.azure.com/${scope}/_apis/${path}${sep}api-version=${apiVersion}`;
   let res;
   try {
     res = await fetch(url, {
       method,
       headers: {
         Authorization: `Basic ${Buffer.from(`:${s.pat}`).toString('base64')}`,
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(body ? { 'Content-Type': contentType } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
       redirect: 'manual',
@@ -88,15 +94,19 @@ async function azFetch(s, path, { method = 'GET', body, org = false } = {}) {
   }
   // A bad or expired PAT gets a sign-in page (203/302) or 401 instead of JSON.
   if ([203, 302, 401].includes(res.status)) {
-    throw new HttpError(502, 'Azure DevOps didn\'t accept the PAT. Check AZ_PAT is valid and has Work Items (Read) access.');
+    throw new HttpError(502, 'Azure DevOps didn\'t accept the PAT. Check AZ_PAT is valid and has Work Items (Read & write) access.');
   }
   const data = await res.json().catch(() => null);
   // Pass on Azure DevOps' own reason so it's clear which permission or policy is missing.
   if (res.status === 403) {
     const reason = data?.message ? ` Azure DevOps said: ${data.message}` : '';
-    throw new HttpError(502, `Azure DevOps refused access to ${s.org}/${s.project}. The PAT must be made in the ${s.org} organisation, with Work Items (Read), by someone who can open this project.${reason}`);
+    throw new HttpError(502, `Azure DevOps refused access to ${s.org}/${s.project}. The PAT must be made in the ${s.org} organisation, with Work Items (Read & write), by someone who can open this project.${reason}`);
   }
   if (res.status === 404) return null;
+  // A JSON Patch "test" of the revision failed: someone changed the item meanwhile.
+  if (res.status === 412 || (res.status === 400 && /test operation|\/rev|revision/i.test(data?.message || ''))) {
+    throw new HttpError(409, 'This task was changed in Azure DevOps a moment ago. Reload and log again.');
+  }
   if (!res.ok) throw new HttpError(502, `Azure DevOps said: ${data?.message || `error ${res.status}`}`);
   return data;
 }
@@ -406,6 +416,10 @@ async function sowItems(s, sprints, areas) {
       title: f[F.title],
       state: f[F.state],
       removed: category === 'Removed',
+      // No Original Estimate (ETA); and 0 h left while still open.
+      noEstimate: !f[F.original],
+      overrun: !(category === 'Completed' || category === 'Resolved' || category === 'Removed')
+        && f[F.remaining] != null && Number(f[F.remaining]) <= 0,
       closed: category === 'Completed' || category === 'Resolved',
       area: areaLabel(f[F.area], areas),
       areaPath: f[F.area],
@@ -482,6 +496,11 @@ export function registerAzdoRoutes(router) {
       fetchedAt: new Date(cached.at).toISOString(),
       buckets: names.map((name) => ({ name, items: cached.items.filter((i) => i.bucket === name).sort((a, b) => a.id - b.id) })),
       picklist: order,
+      // Time logged on this sprint's Tasks and Bugs (not undone).
+      logs: (() => {
+        const ids = new Set(cached.items.flatMap((i) => i.children.map((c) => c.id)));
+        return q.liveLogs.all().filter((l) => ids.has(l.task_id));
+      })(),
       // Which optional columns Azure DevOps has.
       columns: { businessImpact: Boolean(impact), effortSize: Boolean(effort) },
       ...calendarView(),
@@ -490,6 +509,99 @@ export function registerAzdoRoutes(router) {
 
   // Holidays (everyone can see them; admins add and remove them) and hours per day.
   router.get('/api/holidays', () => calendarView());
+
+  // ---------- time logging ----------
+  // The task's assignee (by their email) or an admin can log time on a Task or Bug.
+  const myEmails = (user) => {
+    const emails = new Set([String(user.email || '').toLowerCase()]);
+    const emp = myEmployeeId(user) && q.employee.get(myEmployeeId(user));
+    if (emp?.email) emails.add(emp.email.toLowerCase());
+    return emails;
+  };
+  const todayIst = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
+  const num = (v) => (v == null || v === '' ? null : Number(v));
+  const r2 = (n) => Math.round(n * 100) / 100;
+  async function readTask(s, id, user) {
+    const w = await azFetch(s, `wit/workitems/${Number(id)}`);
+    if (!w) throw new HttpError(404, 'That work item wasn\'t found in Azure DevOps.');
+    const f = w.fields || {};
+    if (!CHILD_TYPES.includes(f[F.type])) throw new HttpError(400, 'Time can only be logged on Tasks and Bugs.');
+    const email = String(f[F.assignedTo]?.uniqueName || '').toLowerCase();
+    if (!isAdmin(user) && (!email || !myEmails(user).has(email))) {
+      throw new HttpError(403, 'You can log time only on tasks assigned to you.');
+    }
+    return { w, f, email };
+  }
+  async function writeHours(s, w, values, comment) {
+    const ops = [{ op: 'test', path: '/rev', value: w.rev }];
+    for (const [field, value] of Object.entries(values)) ops.push({ op: 'add', path: `/fields/${field}`, value });
+    await azFetch(s, `wit/workitems/${w.id}`, { method: 'PATCH', body: ops, contentType: 'application/json-patch+json' });
+    // The comment names the person (the change itself shows as the PAT's owner). Not fatal if it fails.
+    try {
+      await azFetch(s, `wit/workItems/${w.id}/comments`, { method: 'POST', body: { text: comment }, apiVersion: '7.1-preview.4' });
+    } catch { /* the hours are saved; only the comment is missing */ }
+    sowCache.clear();
+  }
+
+  router.post('/api/tasks/:id/log', async ({ params, body, user, setStatus }) => {
+    const s = requireSettings();
+    const day = String(body?.day ?? '');
+    if (!isDay(day)) throw new HttpError(400, 'Choose the day you worked.');
+    if (day > todayIst()) throw new HttpError(400, 'You can\'t log time for a future day.');
+    const hours = num(body?.hours);
+    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) throw new HttpError(400, 'Hours worked must be more than 0 and at most 24.');
+    const note = String(body?.note ?? '').trim() || null;
+    if (note && note.length > 500) throw new HttpError(400, 'Keep the note to 500 characters or fewer.');
+    const { w, f, email } = await readTask(s, params.id, user);
+
+    // No estimate yet: one is needed with the first log.
+    let original = num(f[F.original]);
+    let originalSet = null;
+    if (!original) {
+      originalSet = num(body?.original);
+      if (!Number.isFinite(originalSet) || originalSet <= 0 || originalSet > 1000) {
+        throw new HttpError(400, 'This task has no estimate. Enter its Original Estimate (hours) to log time.');
+      }
+      original = originalSet;
+    }
+    const completedBefore = num(f[F.completed]) || 0;
+    const remainingBefore = num(f[F.remaining]) ?? Math.max(0, original - completedBefore);
+    const completedAfter = r2(completedBefore + hours);
+    // Remaining goes down by the hours (never below 0), unless a new Remaining is given.
+    let remainingAfter = r2(Math.max(0, remainingBefore - hours));
+    if (body?.remaining != null && body.remaining !== '') {
+      remainingAfter = num(body.remaining);
+      if (!Number.isFinite(remainingAfter) || remainingAfter < 0 || remainingAfter > 1000) throw new HttpError(400, 'Remaining must be 0 or more.');
+    }
+    const values = {
+      [F.completed]: completedAfter,
+      [F.remaining]: remainingAfter,
+      ...(originalSet ? { [F.original]: originalSet } : {}),
+    };
+    const who = user.name || user.email;
+    await writeHours(s, w, values,
+      `${hours} h logged by ${who} for ${day} via PaySplit. Completed ${completedBefore} → ${completedAfter} h, remaining ${remainingBefore} → ${remainingAfter} h.${originalSet ? ` Original estimate set to ${originalSet} h.` : ''}${note ? ` Note: ${note}` : ''}`);
+    const id = Number(q.insertLog.run(w.id, f[F.title], email, f[F.assignedTo]?.displayName || '', day, hours,
+      completedBefore, completedAfter, remainingBefore, remainingAfter, originalSet, note, who, user.id).lastInsertRowid);
+    setStatus(201);
+    return { id, completed: completedAfter, remaining: remainingAfter, original };
+  });
+
+  // Undo a log: its hours come off Completed and go back on Remaining, with a comment.
+  router.post('/api/time-logs/:id/undo', async ({ params, user }) => {
+    const s = requireSettings();
+    const log = q.log.get(params.id);
+    if (!log || log.undone_at) throw new HttpError(404, 'That time log wasn\'t found or was already undone. Reload the page.');
+    if (!isAdmin(user) && log.logged_by_id !== user.id) throw new HttpError(403, 'Only the person who logged it or an admin can undo it.');
+    const { w, f } = await readTask(s, log.task_id, isAdmin(user) || log.logged_by_id === user.id ? { ...user, role: 'admin' } : user);
+    const completed = r2(Math.max(0, (num(f[F.completed]) || 0) - log.hours));
+    const remaining = r2((num(f[F.remaining]) || 0) + log.hours);
+    const who = user.name || user.email;
+    await writeHours(s, w, { [F.completed]: completed, [F.remaining]: remaining },
+      `${log.hours} h logged by ${log.logged_by} for ${log.day} was undone by ${who} via PaySplit. Completed → ${completed} h, remaining → ${remaining} h.`);
+    q.undoLog.run(who, log.id);
+    return { ok: true, completed, remaining };
+  });
   router.post('/api/holidays', ({ body, user, setStatus }) => {
     const day = String(body?.day ?? '');
     if (!isDay(day)) throw new HttpError(400, 'Choose the holiday date.');
