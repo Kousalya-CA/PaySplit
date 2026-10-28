@@ -25,6 +25,16 @@ const q = {
     INSERT INTO azdo_iterations (area_id, path, name, start_date, finish_date) VALUES (?, ?, ?, ?, ?)`),
   updateIteration: db.prepare('UPDATE azdo_iterations SET name = ?, start_date = ?, finish_date = ? WHERE id = ?'),
   deleteIteration: db.prepare('DELETE FROM azdo_iterations WHERE id = ?'),
+  holidays: db.prepare('SELECT id, day, name, added_by FROM holidays ORDER BY day'),
+  holiday: db.prepare('SELECT * FROM holidays WHERE id = ?'),
+  insertHoliday: db.prepare('INSERT INTO holidays (day, name, added_by) VALUES (?, ?, ?)'),
+  deleteHoliday: db.prepare('DELETE FROM holidays WHERE id = ?'),
+  leaves: db.prepare(`SELECT l.id, l.employee_id, e.name, LOWER(e.email) AS email, l.from_day, l.to_day, l.half, l.note, l.added_by
+    FROM employee_leaves l JOIN employees e ON e.id = l.employee_id ORDER BY l.from_day, e.name`),
+  leave: db.prepare('SELECT * FROM employee_leaves WHERE id = ?'),
+  leavesFor: db.prepare('SELECT * FROM employee_leaves WHERE employee_id = ?'),
+  insertLeave: db.prepare('INSERT INTO employee_leaves (employee_id, from_day, to_day, half, note, added_by) VALUES (?, ?, ?, ?, ?, ?)'),
+  deleteLeave: db.prepare('DELETE FROM employee_leaves WHERE id = ?'),
   employee: db.prepare('SELECT id, employee_code, name, email, type, active FROM employees WHERE id = ?'),
   customer: db.prepare('SELECT id, name, azdo_client FROM customers WHERE id = ?'),
   employeesWithEmail: db.prepare('SELECT id, name, email, active FROM employees WHERE email IS NOT NULL'),
@@ -37,6 +47,17 @@ const settings = () => ({
   project: q.setting.get('project')?.value || '',
   pat: process.env.AZ_PAT || '',
 });
+// Working hours in a day, for capacity on the SOW Tracker.
+const hoursPerDay = () => Number(q.setting.get('hours_per_day')?.value || 8);
+const calendarView = () => ({
+  holidays: q.holidays.all(),
+  hours_per_day: hoursPerDay(),
+  leaves: q.leaves.all().map((l) => ({ ...l, half: Boolean(l.half) })),
+});
+const isDay = (day) => {
+  const date = new Date(`${day}T00:00:00Z`);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) && !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day;
+};
 
 function requireSettings() {
   const s = settings();
@@ -383,6 +404,7 @@ async function sowItems(s, sprints, areas) {
       sprint: String(f[F.iteration] || '').split('\\').pop(),
       client: client ? fieldText(f[client]) : '',
       assignedTo: f[F.assignedTo]?.displayName || '',
+      assignedEmail: String(f[F.assignedTo]?.uniqueName || '').toLowerCase(),
       original: f[F.original] || 0,
       completed: f[F.completed] || 0,
       remaining: f[F.remaining] || 0,
@@ -435,7 +457,7 @@ export function registerAzdoRoutes(router) {
       sowCache.set(key, cached);
     }
     if (!cached.bucket) {
-      return { months, month: chosen.month, sprints: chosen.sprints, message: 'No field called "Bucket" was found in Azure DevOps, so items can\'t be grouped.' };
+      return { months, month: chosen.month, sprints: chosen.sprints, ...calendarView(), message: 'No field called "Bucket" was found in Azure DevOps, so items can\'t be grouped.' };
     }
 
     // Buckets in the picklist's order (values not in it after, A to Z), then "No bucket".
@@ -450,8 +472,63 @@ export function registerAzdoRoutes(router) {
       fetchedAt: new Date(cached.at).toISOString(),
       buckets: names.map((name) => ({ name, items: cached.items.filter((i) => i.bucket === name).sort((a, b) => a.id - b.id) })),
       picklist: order,
+      ...calendarView(),
     };
   });
+
+  // Holidays (everyone can see them; admins add and remove them) and hours per day.
+  router.get('/api/holidays', () => calendarView());
+  router.post('/api/holidays', ({ body, user, setStatus }) => {
+    const day = String(body?.day ?? '');
+    if (!isDay(day)) throw new HttpError(400, 'Choose the holiday date.');
+    const name = String(body?.name ?? '').trim();
+    if (!name) throw new HttpError(400, 'Enter the holiday name.');
+    if (name.length > 100) throw new HttpError(400, 'Keep the name to 100 characters or fewer.');
+    try {
+      q.insertHoliday.run(day, name, user.name || user.email);
+    } catch (err) {
+      if (/UNIQUE/i.test(String(err.message))) throw new HttpError(409, 'There\'s already a holiday on that date.');
+      throw err;
+    }
+    setStatus(201);
+    return calendarView();
+  }, admin);
+  router.delete('/api/holidays/:id', ({ params }) => {
+    if (!q.holiday.get(params.id)) throw new HttpError(404, 'That holiday wasn\'t found. Reload the page.');
+    q.deleteHoliday.run(params.id);
+    return calendarView();
+  }, admin);
+  // Employee leave (admins add and remove it; everyone sees it on the SOW Tracker).
+  router.post('/api/leaves', ({ body, user, setStatus }) => {
+    const employee = q.employee.get(Number(body?.employee_id));
+    if (!employee) throw new HttpError(400, 'Choose the employee.');
+    const from = String(body?.from_day ?? '');
+    const to = String(body?.to_day || from);
+    if (!isDay(from) || !isDay(to)) throw new HttpError(400, 'Choose the leave dates.');
+    if (to < from) throw new HttpError(400, 'The leave To date is before its From date.');
+    const half = Boolean(body?.half);
+    if (half && to !== from) throw new HttpError(400, 'A half day is a single date: make From and To the same.');
+    const note = String(body?.note ?? '').trim() || null;
+    if (note && note.length > 200) throw new HttpError(400, 'Keep the note to 200 characters or fewer.');
+    const clash = q.leavesFor.all(employee.id).find((l) => l.from_day <= to && l.to_day >= from);
+    if (clash) throw new HttpError(409, `${employee.name} already has leave from ${clash.from_day} to ${clash.to_day}. Remove it first, or pick other dates.`);
+    if (!employee.email) throw new HttpError(400, `Add ${employee.name}'s email on the Employees page first, so their Azure DevOps work can be matched.`);
+    q.insertLeave.run(employee.id, from, to, half ? 1 : 0, note, user.name || user.email);
+    setStatus(201);
+    return calendarView();
+  }, admin);
+  router.delete('/api/leaves/:id', ({ params }) => {
+    if (!q.leave.get(params.id)) throw new HttpError(404, 'That leave wasn\'t found. Reload the page.');
+    q.deleteLeave.run(params.id);
+    return calendarView();
+  }, admin);
+
+  router.put('/api/holidays/hours', ({ body }) => {
+    const n = Number(body?.hours_per_day);
+    if (!Number.isFinite(n) || n <= 0 || n > 24) throw new HttpError(400, 'Hours per day must be more than 0 and at most 24.');
+    q.saveSetting.run('hours_per_day', String(n));
+    return calendarView();
+  }, admin);
 
   router.put('/api/azdo/config', ({ body }) => {
     const org = String(body.org ?? '').trim();

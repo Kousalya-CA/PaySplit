@@ -1,14 +1,65 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
-import { monthLabel } from '../format.js';
+import { dayLabel, monthLabel } from '../format.js';
 
 const hours = (n) => (n ? `${+n.toFixed(2)}` : '–');
 const percent = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
+const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const isoDay = (d) => d.toISOString().slice(0, 10);
+const addDays = (iso, n) => isoDay(new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + n)));
+const lastOfMonth = (m) => isoDay(new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)));
+const today = () => new Date().toLocaleDateString('en-CA');
+
+// Leave on a day for one person (by email): 1, 0.5 for a half day, or 0.
+const leaveOn = (leaves, email, day) => leaves
+  .filter((l) => l.email === email && l.from_day <= day && l.to_day >= day)
+  .reduce((n, l) => Math.max(n, l.half ? 0.5 : 1), 0);
+// A person's leave on the sprint's working days: in total, on days done (up to today) and days left.
+function leaveIn(cal, leaves, email) {
+  const now = today();
+  const out = { used: 0, done: 0, left: 0 };
+  for (const x of cal.days) {
+    if (!x.working) continue;
+    const v = leaveOn(leaves, email, x.day);
+    out.used += v;
+    if (x.day <= now) out.done += v; else out.left += v;
+  }
+  return out;
+}
+const days = (n) => `${+n.toFixed(1)} day${n === 1 ? '' : 's'}`;
+
+// A sprint's days: from the earliest start to the latest finish of the sprints shown (the calendar month
+// when they have no dates). Saturdays, Sundays and company holidays are off; the rest are working days.
+function sprintCalendar(sprints, month, holidays) {
+  if (month === 'undated' && !sprints.some((sp) => sp.start_date)) return null;
+  const starts = sprints.map((sp) => sp.start_date).filter(Boolean).sort();
+  const ends = sprints.map((sp) => sp.finish_date).filter(Boolean).sort();
+  const from = starts[0] || `${month}-01`;
+  const to = ends[ends.length - 1] || lastOfMonth(month);
+  if (to < from) return null;
+  const off = new Map(holidays.map((h) => [h.day, h.name]));
+  const now = today();
+  const days = [];
+  for (let d = from; d <= to && days.length < 400; d = addDays(d, 1)) {
+    const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
+    const weekend = dow === 0 || dow === 6;
+    days.push({ day: d, dow, weekend, holiday: off.get(d) || null, working: !weekend && !off.has(d), past: d < now, today: d === now });
+  }
+  const working = days.filter((x) => x.working);
+  return {
+    from, to, days,
+    working: working.length,
+    done: working.filter((x) => x.day <= now).length,
+    left: working.filter((x) => x.day > now).length,
+    weekends: days.filter((x) => x.weekend).length,
+    holidays: days.filter((x) => x.holiday && !x.weekend),
+  };
+}
 
 // SOW Tracker (everyone): pick a sprint, then see its User Stories and Issues grouped by their Bucket
 // (in the picklist's order), each with its Tasks and Bugs. Read from Azure DevOps; nothing is changed.
-export default function SowTracker() {
+export default function SowTracker({ isAdmin }) {
   const [month, setMonth] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -18,6 +69,13 @@ export default function SowTracker() {
   const [search, setSearch] = useState('');
   const [openBuckets, setOpenBuckets] = useState(() => new Set());
   const [openItems, setOpenItems] = useState(() => new Set());
+  const [showHolidays, setShowHolidays] = useState(false);
+  const [newHoliday, setNewHoliday] = useState({ day: '', name: '' });
+  const [hoursInput, setHoursInput] = useState('');
+  const [notice, setNotice] = useState('');
+  const [person, setPerson] = useState(''); // assignee email
+  const [staff, setStaff] = useState(null); // employees, for adding leave (admins)
+  const [newLeave, setNewLeave] = useState({ employee_id: '', from_day: '', to_day: '', half: false, note: '' });
 
   const load = (m, refresh = false) => {
     setLoading(true);
@@ -28,6 +86,7 @@ export default function SowTracker() {
         setMonth(d.month || '');
         setOpenBuckets(new Set());
         setOpenItems(new Set());
+        setHoursInput(String(d.hours_per_day ?? 8));
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -51,7 +110,17 @@ export default function SowTracker() {
   const words = search.toLowerCase().split(/\s+/).filter(Boolean);
   const matches = (i) => (!team || i.area === team) && (!client || i.client === client)
     && words.every((w) => [i.id, i.title, i.assignedTo, ...i.children.map((c) => `${c.id} ${c.title} ${c.assignedTo}`)].join(' ').toLowerCase().includes(w));
-  const buckets = (data.buckets || []).map((b) => ({ ...b, items: b.items.filter(matches) })).filter((b) => b.items.length);
+  const peopleNames = new Map();
+  for (const i of all) for (const r of [i, ...i.children]) if (r.assignedEmail) peopleNames.set(r.assignedEmail, r.assignedTo || r.assignedEmail);
+  const peopleList = [...peopleNames].sort((a, b) => a[1].localeCompare(b[1]));
+  const forPerson = (i) => {
+    if (!person) return i;
+    const kids = i.children.filter((c) => c.assignedEmail === person);
+    if (!kids.length && i.assignedEmail !== person) return null;
+    const sum = (k) => kids.reduce((n, c) => n + c[k], 0);
+    return { ...i, children: kids, hours: { original: sum('original'), completed: sum('completed'), remaining: sum('remaining') } };
+  };
+  const buckets = (data.buckets || []).map((b) => ({ ...b, items: b.items.map(forPerson).filter(Boolean).filter(matches) })).filter((b) => b.items.length);
 
   const stats = (items) => {
     const kids = items.flatMap((i) => i.children);
@@ -67,6 +136,69 @@ export default function SowTracker() {
     };
   };
   const total = stats(buckets.flatMap((b) => b.items));
+  // The sprint's calendar (for the chosen team's sprint when a team is picked) and capacity.
+  const holidays = data.holidays || [];
+  const hpd = data.hours_per_day || 8;
+  const shownSprints = (data.sprints || []).filter((sp) => !team || sp.area === team);
+  const cal = sprintCalendar(shownSprints.length ? shownSprints : data.sprints || [], month, holidays);
+  const leaves = data.leaves || [];
+  // Everyone with work in what's shown (task and bug assignees, else the stories' assignees).
+  const emails = person ? [person] : [...new Set(buckets.flatMap((b) => b.items.flatMap((i) => i.children.map((c) => c.assignedEmail).filter(Boolean))))];
+  if (!person && !emails.length) emails.push(...new Set(buckets.flatMap((b) => b.items.map((i) => i.assignedEmail).filter(Boolean))));
+  const people = emails.length;
+  const perPerson = cal ? cal.working * hpd : 0;
+  // Each person's working days less their leave, in total and still to come.
+  const cap = { leave: 0, available: 0, left: 0 };
+  if (cal) {
+    for (const e of emails) {
+      const lv = leaveIn(cal, leaves, e);
+      cap.leave += lv.used;
+      cap.available += cal.working - lv.used;
+      cap.left += cal.left - lv.left;
+    }
+  }
+  const teamCapacity = cap.available * hpd;
+  const leftCapacity = cap.left * hpd;
+  const sprintLeaves = cal ? leaves.filter((l) => l.from_day <= cal.to && l.to_day >= cal.from && (!person || l.email === person)) : [];
+  // Holidays: add, remove, and hours per day (admins).
+  const holidayCall = async (fn, done) => {
+    setError('');
+    setNotice('');
+    try {
+      const v = await fn();
+      setData((d) => ({ ...d, holidays: v.holidays, hours_per_day: v.hours_per_day, leaves: v.leaves }));
+      setHoursInput(String(v.hours_per_day));
+      setNotice(done);
+      return true;
+    } catch (err) { setError(err.message); return false; }
+  };
+  const addHoliday = async (e) => {
+    e.preventDefault();
+    if (await holidayCall(() => api.holidays.add(newHoliday.day, newHoliday.name), `Added ${newHoliday.name}.`)) setNewHoliday({ day: '', name: '' });
+  };
+  const openHolidays = () => {
+    setShowHolidays(!showHolidays);
+    if (isAdmin && !staff) api.employees.list().then((list) => setStaff(list.filter((e) => e.active))).catch((e) => setError(e.message));
+  };
+  const addLeave = async (e) => {
+    e.preventDefault();
+    const body = { ...newLeave, employee_id: Number(newLeave.employee_id), to_day: newLeave.half ? newLeave.from_day : newLeave.to_day || newLeave.from_day };
+    const name = staff?.find((x) => x.id === body.employee_id)?.name || 'the employee';
+    if (await holidayCall(() => api.holidays.addLeave(body), `Added leave for ${name}.`)) setNewLeave({ employee_id: '', from_day: '', to_day: '', half: false, note: '' });
+  };
+  const removeLeave = (l) => {
+    if (!window.confirm(`Remove ${l.name}'s leave ${leaveLabel(l)}?`)) return;
+    holidayCall(() => api.holidays.removeLeave(l.id), `Removed ${l.name}'s leave.`);
+  };
+  const leaveLabel = (l) => (l.from_day === l.to_day ? `${dayLabel(l.from_day)}${l.half ? ' (half day)' : ''}` : `${dayLabel(l.from_day)} to ${dayLabel(l.to_day)}`);
+  const removeHoliday = (h) => {
+    if (!window.confirm(`Remove the holiday ${h.name} on ${dayLabel(h.day)}?`)) return;
+    holidayCall(() => api.holidays.remove(h.id), `Removed ${h.name}.`);
+  };
+  const saveHours = (e) => {
+    e.preventDefault();
+    holidayCall(() => api.holidays.setHours(Number(hoursInput)), 'Hours per day saved.');
+  };
   const years = [...new Set(data.months.map((m) => (m.month === 'undated' ? 'undated' : m.month.slice(0, 4))))];
   const year = month === 'undated' ? 'undated' : month.slice(0, 4);
 
@@ -143,6 +275,15 @@ export default function SowTracker() {
                 </select>
               </label>
             )}
+            {peopleList.length > 0 && (
+              <label className="wi-filter">
+                <span>Person</span>
+                <select value={person} onChange={(e) => setPerson(e.target.value)}>
+                  <option value="">Everyone</option>
+                  {peopleList.map(([email, name]) => <option key={email} value={email}>{name}</option>)}
+                </select>
+              </label>
+            )}
             <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search ID, title or person" aria-label="Search" />
             {buckets.length > 0 && (
               <button className="link" onClick={() => setOpenBuckets(openBuckets.size ? new Set() : new Set(buckets.map((b) => b.name)))}>
@@ -150,6 +291,55 @@ export default function SowTracker() {
               </button>
             )}
           </div>
+
+          {cal && (
+            <div className="sow-calendar">
+              <div className="sow-cal-head">
+                <strong>{shownSprints.length ? [...new Set(shownSprints.map((sp) => sp.name))].join(', ') : 'Sprint'}</strong>
+                <span className="muted"> · {dayLabel(cal.from)} to {dayLabel(cal.to)}</span>
+              </div>
+              <div className="sow-cal-stats">
+                <span><strong>{cal.working}</strong> working days</span>
+                <span><strong>{cal.done}</strong> done</span>
+                <span><strong>{cal.left}</strong> left</span>
+                <span className="muted">{cal.weekends} weekend days{cal.holidays.length ? ` · ${cal.holidays.length} holiday${cal.holidays.length === 1 ? '' : 's'}` : ''}</span>
+                {!person && <span>Capacity <strong>{hours(perPerson)} h</strong> per person ({cal.working} × {hpd} h)</span>}
+              </div>
+              {people > 0 && (
+                <div className="sow-cal-stats sow-capacity">
+                  {person ? (
+                    <span>
+                      <strong>{peopleNames.get(person)}</strong>: {cal.working} working days − {days(cap.leave)} leave = <strong>{days(cap.available)}</strong> available
+                      {' '}· <strong>{days(cap.left)}</strong> left
+                    </span>
+                  ) : (
+                    <span>{people} {people === 1 ? 'person' : 'people'} · <strong>{days(cap.leave)}</strong> leave in this sprint</span>
+                  )}
+                  <span>Capacity <strong>{hours(teamCapacity)} h</strong> · estimated {hours(total.original)} h
+                    = <strong className={total.original > teamCapacity ? 'warn-text' : ''}>{percent(total.original, teamCapacity)}%</strong></span>
+                  <span>Remaining capacity <strong>{hours(leftCapacity)} h</strong> vs remaining work
+                    {' '}<strong className={total.remaining > leftCapacity ? 'warn-text' : 'ok-text'}>{hours(total.remaining)} h</strong>
+                    {total.remaining > leftCapacity && <span className="warn-text"> (over by {hours(total.remaining - leftCapacity)} h)</span>}
+                  </span>
+                </div>
+              )}
+              <div className="sow-cal-days" role="list" aria-label="Sprint days">
+                {cal.days.map((x) => (
+                  <span key={x.day} role="listitem"
+                    className={`sow-day${x.working ? (person && leaveOn(leaves, person, x.day) ? (leaveOn(leaves, person, x.day) < 1 ? ' leave half' : ' leave') : '') : x.holiday && !x.weekend ? ' holiday' : ' weekend'}${x.past ? ' past' : ''}${x.today ? ' today' : ''}`}
+                    title={`${WEEKDAY[x.dow]} ${dayLabel(x.day)}${x.holiday ? ` · ${x.holiday}` : x.weekend ? ' · Weekend' : person && leaveOn(leaves, person, x.day) ? (leaveOn(leaves, person, x.day) < 1 ? ' · Half day leave' : ' · Leave') : ' · Working day'}${x.today ? ' · Today' : ''}`}>
+                    <small>{WEEKDAY[x.dow].slice(0, 2)}</small>{+x.day.slice(8)}
+                  </span>
+                ))}
+              </div>
+              {cal.holidays.length > 0 && (
+                <p className="small sow-cal-holidays">Holidays: {cal.holidays.map((h) => `${dayLabel(h.day)} ${h.holiday}`).join(' · ')}</p>
+              )}
+              {sprintLeaves.length > 0 && (
+                <p className="small sow-cal-leaves">Leave: {sprintLeaves.map((l) => `${person ? '' : `${l.name} `}${leaveLabel(l)}`).join(' · ')}</p>
+              )}
+            </div>
+          )}
 
           <p className="small sow-total">
             <strong>{buckets.length}</strong> bucket{buckets.length === 1 ? '' : 's'} · <strong>{total.items}</strong> User Stories and Issues,
@@ -235,6 +425,105 @@ export default function SowTracker() {
             );
           })}
         </>
+      )}
+
+      <h2>
+        <button type="button" className="drill" aria-expanded={showHolidays} onClick={openHolidays}>
+          <span className="drill-caret" aria-hidden="true">▸</span>Holidays ({holidays.length}) &amp; leave ({leaves.length})
+        </button>
+      </h2>
+      {notice && <p className="ok-text small" role="status">{notice}</p>}
+      {showHolidays && (
+        <div className="sow-holidays">
+          <p className="muted small">Saturdays and Sundays are always off. These company holidays apply to every team; working days and capacity leave them out. Leave is taken off that person's working days (pick them in Person to see theirs).</p>
+          <h3>Company holidays</h3>
+          {holidays.length === 0 ? <p className="muted">No holidays added yet.</p> : (
+            <div className="table-wrap">
+              <table className="grid list">
+                <thead><tr><th scope="col">Date</th><th scope="col">Day</th><th scope="col">Holiday</th>{isAdmin && <th><span className="sr-only">Actions</span></th>}</tr></thead>
+                <tbody>
+                  {holidays.map((h) => (
+                    <tr key={h.id} className={h.day < today() ? 'muted' : undefined}>
+                      <td>{dayLabel(h.day)}</td>
+                      <td>{WEEKDAY[new Date(`${h.day}T00:00:00Z`).getUTCDay()]}</td>
+                      <th scope="row">{h.name}</th>
+                      {isAdmin && <td className="row-actions small"><button className="link danger" onClick={() => removeHoliday(h)}>Remove</button></td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {isAdmin && (
+            <>
+              <form className="row" onSubmit={addHoliday}>
+                <label>
+                  <span>Date</span>
+                  <input type="date" value={newHoliday.day} onChange={(e) => setNewHoliday({ ...newHoliday, day: e.target.value })} required />
+                </label>
+                <label className="grow">
+                  <span>Holiday name</span>
+                  <input value={newHoliday.name} maxLength={100} placeholder="For example Diwali" onChange={(e) => setNewHoliday({ ...newHoliday, name: e.target.value })} required />
+                </label>
+                <button className="secondary" type="submit">Add holiday</button>
+              </form>
+              <h3>Employee leave</h3>
+              {leaves.length === 0 ? <p className="muted small">No leave added yet.</p> : (
+                <div className="table-wrap">
+                  <table className="grid list">
+                    <thead><tr><th scope="col">Employee</th><th scope="col">Leave</th><th scope="col">Note</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                    <tbody>
+                      {leaves.map((l) => (
+                        <tr key={l.id} className={l.to_day < today() ? 'muted' : undefined}>
+                          <th scope="row">{l.name}</th>
+                          <td>{leaveLabel(l)}</td>
+                          <td className="small">{l.note || <span className="muted">–</span>}</td>
+                          <td className="row-actions small"><button className="link danger" onClick={() => removeLeave(l)}>Remove</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <form className="row" onSubmit={addLeave}>
+                <label>
+                  <span>Employee</span>
+                  <select value={newLeave.employee_id} required onChange={(e) => setNewLeave({ ...newLeave, employee_id: e.target.value })}>
+                    <option value="">Choose…</option>
+                    {(staff || []).map((x) => <option key={x.id} value={x.id}>{x.name}{x.email ? '' : ' (no email)'}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>From</span>
+                  <input type="date" value={newLeave.from_day} required onChange={(e) => setNewLeave({ ...newLeave, from_day: e.target.value, to_day: newLeave.to_day && newLeave.to_day >= e.target.value ? newLeave.to_day : e.target.value })} />
+                </label>
+                {!newLeave.half && (
+                  <label>
+                    <span>To</span>
+                    <input type="date" value={newLeave.to_day} min={newLeave.from_day} onChange={(e) => setNewLeave({ ...newLeave, to_day: e.target.value })} />
+                  </label>
+                )}
+                <label className="check">
+                  <input type="checkbox" checked={newLeave.half} onChange={(e) => setNewLeave({ ...newLeave, half: e.target.checked })} /> Half day
+                </label>
+                <label className="grow">
+                  <span>Note (optional)</span>
+                  <input value={newLeave.note} maxLength={200} placeholder="For example Sick leave" onChange={(e) => setNewLeave({ ...newLeave, note: e.target.value })} />
+                </label>
+                <button className="secondary" type="submit">Add leave</button>
+              </form>
+
+              <h3>Hours</h3>
+              <form className="row" onSubmit={saveHours}>
+                <label>
+                  <span>Working hours per day</span>
+                  <input type="number" min="0.5" max="24" step="0.5" value={hoursInput} onChange={(e) => setHoursInput(e.target.value)} required />
+                </label>
+                <button className="secondary" type="submit">Save</button>
+              </form>
+            </>
+          )}
+        </div>
       )}
     </section>
   );

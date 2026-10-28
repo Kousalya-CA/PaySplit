@@ -48,6 +48,13 @@ export const api = {
     removePip: (pipId) => request(`/pips/${pipId}`, { method: 'DELETE' }),
   },
   sow: (month, refresh) => request(`/sow?month=${encodeURIComponent(month || '')}${refresh ? '&refresh=1' : ''}`),
+  holidays: {
+    add: (day, name) => request('/holidays', { method: 'POST', body: { day, name } }),
+    remove: (id) => request(`/holidays/${id}`, { method: 'DELETE' }),
+    setHours: (hours) => request('/holidays/hours', { method: 'PUT', body: { hours_per_day: hours } }),
+    addLeave: (body) => request('/leaves', { method: 'POST', body }),
+    removeLeave: (id) => request(`/leaves/${id}`, { method: 'DELETE' }),
+  },
   azdo: {
     config: () => request('/azdo/config'),
     saveConfig: (body) => request('/azdo/config', { method: 'PUT', body }),

@@ -485,3 +485,22 @@ td.cell-pip.cell-relieved { background: linear-gradient(90deg, #fff7e6 50%, #fde
 .sow-bar { display: inline-block; width: 5rem; vertical-align: middle; }
 .sow-bucket .table-wrap { margin-top: .6rem; }
 .sow-nokids { display: inline-block; width: .8em; }
+
+/* SOW Tracker: the sprint calendar (weekends and holidays off). */
+.sow-calendar { border: 2px solid var(--line); border-radius: .8rem; background: var(--surface); padding: .75rem 1rem; margin: .75rem 0; display: grid; gap: .5rem; }
+.sow-cal-stats { display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; font-size: .9rem; }
+.sow-cal-days { display: flex; flex-wrap: wrap; gap: .25rem; }
+.sow-day { display: grid; place-items: center; width: 2.3rem; padding: .15rem 0; border-radius: .4rem; font-weight: 700; font-size: .85rem; background: var(--green-soft); color: var(--ink); line-height: 1.1; }
+.sow-day small { font-weight: 500; font-size: .65rem; color: var(--muted); }
+.sow-day.weekend { background: var(--paper); color: var(--muted); }
+.sow-day.holiday { background: var(--danger-soft); color: var(--danger); }
+.sow-day.past { opacity: .55; }
+.sow-day.today { outline: 2px solid var(--ink); opacity: 1; }
+.sow-cal-holidays { margin: 0; color: var(--danger); }
+.sow-holidays { display: grid; gap: .6rem; }
+.sow-day.leave { background: #e6dcf7; color: #5b2a9e; }
+.sow-day.leave.half { background: linear-gradient(135deg, #e6dcf7 50%, var(--green-soft) 50%); }
+.sow-cal-leaves { margin: 0; color: #5b2a9e; }
+.sow-capacity { padding-top: .35rem; border-top: 1px solid var(--line); }
+.sow-holidays h3 { font-size: 1rem; margin: .6rem 0 0; }
+label.check { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; }

@@ -106,6 +106,29 @@ db.exec(`
     path TEXT NOT NULL UNIQUE COLLATE NOCASE,     -- e.g. 'Trisul.Org\\Agentic - Billing and Data Platform'
     name TEXT NOT NULL
   );
+  -- Company holidays (one list for every team). Saturdays and Sundays are always off. A sprint's
+  -- working days are its weekdays that aren't holidays; azdo_settings 'hours_per_day' (8 by default)
+  -- turns them into capacity hours on the SOW Tracker.
+  CREATE TABLE IF NOT EXISTS holidays (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    day      TEXT NOT NULL UNIQUE,                -- 'YYYY-MM-DD'
+    name     TEXT NOT NULL,
+    added_by TEXT,
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  -- Employee leave: From and To dates (a half day is one date with half = 1). Only working days in the
+  -- range count; the SOW Tracker takes them off that person's working days and capacity.
+  CREATE TABLE IF NOT EXISTS employee_leaves (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    from_day    TEXT NOT NULL,                   -- 'YYYY-MM-DD'
+    to_day      TEXT NOT NULL,                   -- on or after from_day
+    half        INTEGER NOT NULL DEFAULT 0,      -- 1 = half a day (from_day = to_day)
+    note        TEXT,
+    added_by    TEXT,
+    added_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_employee_leaves_employee ON employee_leaves(employee_id);
   CREATE TABLE IF NOT EXISTS azdo_iterations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     area_id     INTEGER NOT NULL REFERENCES azdo_areas(id) ON DELETE CASCADE,
