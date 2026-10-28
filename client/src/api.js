@@ -48,6 +48,7 @@ export const api = {
     removePip: (pipId) => request(`/pips/${pipId}`, { method: 'DELETE' }),
   },
   sow: (month, refresh) => request(`/sow?month=${encodeURIComponent(month || '')}${refresh ? '&refresh=1' : ''}`),
+  timesheet: (from, to, email) => request(`/timesheet?from=${from}&to=${to}${email ? `&email=${encodeURIComponent(email)}` : ''}`),
   timeLog: {
     log: (taskId, body) => request(`/tasks/${taskId}/log`, { method: 'POST', body }),
     undo: (logId) => request(`/time-logs/${logId}/undo`, { method: 'POST' }),

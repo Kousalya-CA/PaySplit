@@ -34,6 +34,8 @@ const q = {
     remaining_before, remaining_after, original_set, note, logged_by, logged_by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
   log: db.prepare('SELECT * FROM time_logs WHERE id = ?'),
   undoLog: db.prepare("UPDATE time_logs SET undone_at = datetime('now'), undone_by = ? WHERE id = ? AND undone_at IS NULL"),
+  logsBetween: db.prepare(`SELECT id, task_id, task_title, email, assignee, day, hours, note, logged_by, logged_by_id, at
+    FROM time_logs WHERE undone_at IS NULL AND day BETWEEN ? AND ? ORDER BY day, task_id, id`),
   liveLogs: db.prepare('SELECT id, task_id, email, assignee, day, hours, note, logged_by, logged_by_id, at FROM time_logs WHERE undone_at IS NULL ORDER BY day, id'),
   leaves: db.prepare(`SELECT l.id, l.employee_id, e.name, LOWER(e.email) AS email, l.from_day, l.to_day, l.half, l.note, l.added_by
     FROM employee_leaves l JOIN employees e ON e.id = l.employee_id ORDER BY l.from_day, e.name`),
@@ -585,6 +587,31 @@ export function registerAzdoRoutes(router) {
       completedBefore, completedAfter, remainingBefore, remainingAfter, originalSet, note, who, user.id).lastInsertRowid);
     setStatus(201);
     return { id, completed: completedAfter, remaining: remainingAfter, original };
+  });
+
+  // Timesheet: hours logged (not undone) per person, task and day, ?from=2026-10-26&to=2026-11-01.
+  // An employee sees only their own; admins see everyone, or one person with ?email=.
+  router.get('/api/timesheet', ({ req, user }) => {
+    const search = new URL(req.url, 'http://x').searchParams;
+    const from = search.get('from') || '';
+    const to = search.get('to') || '';
+    if (!isDay(from) || !isDay(to) || to < from) throw new HttpError(400, 'Choose the From and To dates.');
+    if ((Date.parse(to) - Date.parse(from)) / 86400000 > 62) throw new HttpError(400, 'Show at most two months at a time.');
+    const s = settings();
+    const mine = myEmails(user);
+    const admin = isAdmin(user);
+    const asked = String(search.get('email') || '').toLowerCase();
+    const people = q.employeesWithEmail.all()
+      .map((e) => ({ id: e.id, name: e.name, email: e.email.toLowerCase(), active: Boolean(e.active) }))
+      .filter((e) => admin || mine.has(e.email))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const logs = q.logsBetween.all(from, to)
+      .filter((l) => (admin ? !asked || l.email === asked : mine.has(l.email)))
+      .map((l) => ({
+        ...l,
+        url: s.org ? `https://dev.azure.com/${encodeURIComponent(s.org)}/${encodeURIComponent(s.project)}/_workitems/edit/${l.task_id}` : null,
+      }));
+    return { from, to, email: admin ? asked : [...mine][0] || '', people, logs, ...calendarView() };
   });
 
   // Undo a log: its hours come off Completed and go back on Remaining, with a comment.

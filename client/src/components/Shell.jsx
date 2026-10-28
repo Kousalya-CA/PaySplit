@@ -7,6 +7,7 @@ import PaymentsPage from '../pages/PaymentsPage.jsx';
 import UsersPage, { roleLabel } from '../pages/UsersPage.jsx';
 import EmployeeDetail from '../pages/EmployeeDetail.jsx';
 import SowTracker from '../pages/SowTracker.jsx';
+import Timesheet from '../pages/Timesheet.jsx';
 import AzureDevOpsPage from '../pages/AzureDevOpsPage.jsx';
 import DeploymentsPage, { CustomerDeployments } from '../pages/Deployments.jsx';
 import PayoutsPage from '../pages/PayoutsPage.jsx';
@@ -21,6 +22,7 @@ const NAV = [
   ['payouts', 'Payouts', { admin: true }],
   ['deployments', 'Deployments'],
   ['sow', 'SOW Tracker'],
+  ['timesheet', 'Timesheet'],
   ['users', 'Users', { admin: true }],
   ['azure-devops', 'Azure DevOps', { admin: true }],
 ];
@@ -37,6 +39,7 @@ export default function Shell({ user, onLogout }) {
   else if (section === 'employees') page = <EmployeesPage isAdmin={isAdmin} />;
   else if (section === 'azure-devops' && isAdmin) page = <AzureDevOpsPage />;
   else if (section === 'deployments') page = <DeploymentsPage user={user} customerId={id ? Number(id) : null} />;
+  else if (section === 'timesheet') page = <Timesheet isAdmin={isAdmin} />;
   else if (section === 'sow') page = <SowTracker isAdmin={isAdmin} user={user} />;
   else if (section === 'payments') page = <PaymentsPage isAdmin={isAdmin} />;
   else if (section === 'users' && isAdmin) page = <UsersPage me={user} />;

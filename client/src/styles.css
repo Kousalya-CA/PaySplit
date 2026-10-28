@@ -516,3 +516,21 @@ label.check { display: inline-flex; align-items: center; gap: .35rem; font-weigh
 .sow-log { display: grid; gap: .4rem; padding: .4rem 0; }
 .sow-log p { margin: 0; }
 .sow-log-history { max-width: 46rem; }
+
+/* Timesheet: hours logged per day. */
+.ts-table th, .ts-table td { padding: .35rem .45rem; }
+.ts-table .ts-name { min-width: 14rem; max-width: 26rem; }
+.ts-head { font-size: .8rem; line-height: 1.2; }
+.ts-head.weekend, .ts-cell.weekend, .ts-day.weekend { background: var(--paper); color: var(--muted); }
+.ts-head.holiday, .ts-cell.holiday, .ts-day.holiday { background: var(--danger-soft); }
+.ts-head.today { outline: 2px solid var(--ink); outline-offset: -2px; }
+.ts-day.leave { background: #efe7fb; }
+.ts-day.under { box-shadow: inset 0 -3px 0 #e0a100; color: #8a5a00; font-weight: 700; }
+.ts-day.over { box-shadow: inset 0 -3px 0 var(--danger); color: var(--danger); font-weight: 700; }
+.ts-legend { margin-top: .75rem; }
+.ts-key { display: inline-block; width: .9rem; height: .9rem; border-radius: .2rem; vertical-align: middle; margin-left: .3rem; }
+.ts-key.under { box-shadow: inset 0 -3px 0 #e0a100; background: var(--surface); border: 1px solid var(--line); }
+.ts-key.over { box-shadow: inset 0 -3px 0 var(--danger); background: var(--surface); border: 1px solid var(--line); }
+.ts-key.weekend { background: var(--paper); border: 1px solid var(--line); }
+.ts-key.holiday { background: var(--danger-soft); }
+.ts-key.leave { background: #efe7fb; }
