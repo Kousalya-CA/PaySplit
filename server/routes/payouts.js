@@ -5,7 +5,8 @@
 // submitted it; then lines are marked paid with the payroll date. Until paid, an approval can
 // be undone (back to submitted), a submission undone (back to "to submit") and a payment undone (back
 // to approved), each with a comment.
-// Every step is written to payout_log with its comment.
+// Pay (not submitted, submitted or approved) can be moved to the next quarter with a comment, and moved
+// back. Every step is written to payout_log with its comment.
 // Employees see their own submitted statements. See payout_* tables in db.js.
 import { db, transaction } from '../db.js';
 import { HttpError } from '../http.js';
@@ -73,6 +74,18 @@ const q = {
   history: db.prepare(`SELECT g.*, e.name AS employee FROM payout_log g JOIN employees e ON e.id = g.employee_id
     WHERE g.quarter = ? ORDER BY g.id DESC`),
   notes: db.prepare('SELECT * FROM payout_notes WHERE quarter = ?'),
+  activeMoveItems: db.prepare(`SELECT m.id, m.from_quarter, m.to_quarter, m.comment, m.by_name, m.at, i.allocation_id, i.part
+    FROM payout_moves m JOIN payout_move_items i ON i.move_id = m.id WHERE m.reverted_at IS NULL ORDER BY m.id`),
+  move: db.prepare('SELECT m.*, e.name AS employee FROM payout_moves m JOIN employees e ON e.id = m.employee_id WHERE m.id = ?'),
+  moveItems: db.prepare('SELECT allocation_id, part FROM payout_move_items WHERE move_id = ?'),
+  movesFrom: db.prepare(`SELECT m.*, e.name AS employee FROM payout_moves m JOIN employees e ON e.id = m.employee_id
+    WHERE m.from_quarter = ? AND m.reverted_at IS NULL ORDER BY e.name`),
+  insertMove: db.prepare(`INSERT INTO payout_moves (employee_id, currency, amount, from_quarter, to_quarter, comment, by_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`),
+  insertMoveItem: db.prepare('INSERT INTO payout_move_items (move_id, allocation_id, part) VALUES (?, ?, ?)'),
+  revertMove: db.prepare("UPDATE payout_moves SET reverted_at = datetime('now'), reverted_by = ?, revert_comment = ? WHERE id = ? AND reverted_at IS NULL"),
+  lineItemKeys: db.prepare('SELECT allocation_id, part FROM payout_items WHERE line_id = ?'),
+  itemInLine: db.prepare('SELECT 1 FROM payout_items WHERE allocation_id = ? AND part = ?'),
   saveNote: db.prepare(`
     INSERT INTO payout_notes (quarter, employee_id, comment) VALUES (?, ?, ?)
     ON CONFLICT (quarter, employee_id) DO UPDATE SET comment = excluded.comment, updated_at = datetime('now')`),
@@ -116,10 +129,13 @@ function state() {
   const closed = (qq) => !waiting.has(qq) && (linesBy.get(qq) || []).length > 0 && linesBy.get(qq).every((l) => l.status === 'paid');
   const draft = new Map(); // quarter -> Map('employee|currency' -> group)
   const ratings = new Map(q.ratings.all().map((r) => [`${r.period_id}|${r.part}|${r.employee_id}`, r]));
+  // Pay moved to a later quarter waits there (the latest move wins).
+  const moved = new Map(q.activeMoveItems.all().map((m) => [`${m.allocation_id}|${m.part}`, m]));
   for (const p of q.parts.all()) {
     if (p.old_paid_on || p.payout_line_id || Math.abs(p.amount || 0) < 0.005) continue;
     const own = quarterOf(p.part_month);
-    let qq = own < cfg.first_quarter ? cfg.first_quarter : own;
+    const mv = moved.get(`${p.allocation_id}|${p.part}`);
+    let qq = mv ? mv.to_quarter : own < cfg.first_quarter ? cfg.first_quarter : own;
     while (closed(qq)) qq = nextQuarter(qq);
     if (!draft.has(qq)) draft.set(qq, new Map());
     const key = `${p.employee_id}|${p.currency}`;
@@ -128,7 +144,10 @@ function state() {
     const g = groups.get(key);
     g.amount = round2(g.amount + p.amount);
     const r = ratings.get(`${p.period_id}|${p.alloc_part ?? 0}|${p.employee_id}`);
-    g.items.push({ ...p, carried: own !== qq, rating: r?.rating ?? null, rating_comment: r?.comment ?? null });
+    g.items.push({
+      ...p, carried: !mv && own !== qq, rating: r?.rating ?? null, rating_comment: r?.comment ?? null,
+      moved: mv ? { id: mv.id, from_quarter: mv.from_quarter, comment: mv.comment, by_name: mv.by_name, at: mv.at } : null,
+    });
   }
   return { cfg, linesBy, draft };
 }
@@ -274,6 +293,8 @@ export function registerPayoutRoutes(router) {
       admin_count: adminCount,
       admins,
       history: q.history.all(quarter),
+      // Pay moved from this quarter to the next (still there), with whether it can be moved back.
+      moved_out: q.movesFrom.all(quarter).map((m) => ({ ...m, can_move_back: !moveBackBlocker(m) })),
     };
   }, admin);
 
@@ -383,6 +404,70 @@ export function registerPayoutRoutes(router) {
       logLine(line, 'undo_submit', comment, user);
     });
     return { ok: true };
+  }, admin);
+
+  // Move pay to the next quarter, with a comment: an employee's pay not submitted yet, or a submitted
+  // or approved line (the line is removed and its pay waits in the next quarter's To submit).
+  const moveComment = (body) => {
+    const comment = String(body?.comment ?? '').trim();
+    if (!comment) throw new HttpError(400, 'Add a comment saying why the pay moves to the next quarter.');
+    if (comment.length > 2000) throw new HttpError(400, 'Keep the comment to 2000 characters or fewer.');
+    return comment;
+  };
+  const recordMove = (employeeId, currency, amount, from, keys, comment, user) => {
+    const to = nextQuarter(from);
+    const id = Number(q.insertMove.run(employeeId, currency, amount, from, to, comment, byName(user)).lastInsertRowid);
+    for (const k of keys) q.insertMoveItem.run(id, k.allocation_id, k.part);
+    // An undone submission's note would keep the quarter open; the pay has left it.
+    q.clearSentBack.run(from, employeeId);
+    q.log.run(from, employeeId, currency, amount, 'moved', `To ${to}: ${comment}`, byName(user));
+    q.log.run(to, employeeId, currency, amount, 'moved', `From ${from}: ${comment}`, byName(user));
+    return to;
+  };
+  router.post('/api/payouts/:quarter/move', ({ params, body, user }) => {
+    const quarter = requireQuarter(params.quarter);
+    const comment = moveComment(body);
+    const g = state().draft.get(quarter)?.get(`${Number(body?.employee_id)}|${body?.currency}`);
+    if (!g) throw new HttpError(404, 'That employee has no pay waiting to be submitted in this quarter. Reload the page.');
+    const to = transaction(() => recordMove(g.employee_id, g.currency, g.amount, quarter, g.items, comment, user));
+    return { ok: true, to_quarter: to };
+  }, admin);
+  router.post('/api/payout-lines/:id/move', ({ params, body, user }) => {
+    const line = requireLine(params.id);
+    if (line.status === 'paid') throw new HttpError(409, `${line.employee}'s line is already paid, so it can't move. Undo paid first.`);
+    const comment = moveComment(body);
+    const to = transaction(() => {
+      const keys = q.lineItemKeys.all(line.id);
+      q.deleteLine.run(line.id);
+      return recordMove(line.employee_id, line.currency, line.amount, line.quarter, keys, comment, user);
+    });
+    return { ok: true, to_quarter: to };
+  }, admin);
+
+  // Why a move can't be moved back, or null: its pay was submitted in the new quarter, or moved on again.
+  function moveBackBlocker(m) {
+    const keys = q.moveItems.all(m.id);
+    if (keys.some((k) => q.itemInLine.get(k.allocation_id, k.part))) return `${m.employee}'s moved pay is already submitted in ${m.to_quarter}. Undo that submission first.`;
+    const later = q.activeMoveItems.all().filter((x) => x.id > m.id && keys.some((k) => k.allocation_id === x.allocation_id && k.part === x.part));
+    if (later.length) return `${m.employee}'s pay was moved on again to ${later[0].to_quarter}. Move it back from there first.`;
+    return null;
+  }
+  // Move pay back to the quarter it came from (with a comment); it's waiting to be submitted there again.
+  router.post('/api/payout-moves/:id/move-back', ({ params, body, user }) => {
+    const m = q.move.get(params.id);
+    if (!m || m.reverted_at) throw new HttpError(404, 'That move wasn\'t found or was already moved back. Reload the page.');
+    const why = moveBackBlocker(m);
+    if (why) throw new HttpError(409, why);
+    const comment = String(body?.comment ?? '').trim();
+    if (!comment) throw new HttpError(400, 'Add a comment saying why the pay moves back.');
+    if (comment.length > 2000) throw new HttpError(400, 'Keep the comment to 2000 characters or fewer.');
+    transaction(() => {
+      q.revertMove.run(byName(user), comment, m.id);
+      q.clearSentBack.run(m.to_quarter, m.employee_id);
+      q.log.run(m.to_quarter, m.employee_id, m.currency, m.amount, 'move_back', `Back to ${m.from_quarter}: ${comment}`, byName(user));
+      q.log.run(m.from_quarter, m.employee_id, m.currency, m.amount, 'move_back', `Back from ${m.to_quarter}: ${comment}`, byName(user));
+    });
+    return { ok: true, to_quarter: m.from_quarter };
   }, admin);
 
   router.post('/api/payout-lines/:id/paid', ({ params, body, user }) => {

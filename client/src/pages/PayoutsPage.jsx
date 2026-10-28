@@ -10,6 +10,8 @@ import { EmpName, EmpTags, useEmployeeMap } from '../components/EmpStatus.jsx';
 // approved lines are marked paid with the payroll date. Until paid, an approval or a submission can be
 // undone with a comment. The History list shows every step with its comment.
 // How many admins approve each line (0, 1 or 2) is set on the Payouts list.
+// Pay not submitted yet, or a submitted or approved line, can be moved to the next quarter (with a
+// comment) and moved back.
 export default function PayoutsPage({ quarter, user }) {
   return quarter ? <QuarterPayout quarter={quarter} user={user} /> : <PayoutList />;
 }
@@ -25,7 +27,9 @@ const approvalRule = (n) => (n === 0
   : n === 1
     ? 'one submits, and any other admin approves (1 approval).'
     : 'one submits, and two other admins each approve (2 approvals, from two different admins).');
-const historyLabel = { submitted: 'Submitted', approval: 'Approval added', approved: 'Approved', undo_approve: 'Approval undone', undo_submit: 'Submission undone', paid: 'Paid', undo_paid: 'Payment undone' };
+// '2026-Q4' -> '2027-Q1'.
+const nextQuarterOf = (q) => (q.endsWith('Q4') ? `${Number(q.slice(0, 4)) + 1}-Q1` : `${q.slice(0, 6)}${Number(q.slice(6)) + 1}`);
+const historyLabel = { submitted: 'Submitted', approval: 'Approval added', approved: 'Approved', undo_approve: 'Approval undone', undo_submit: 'Submission undone', paid: 'Paid', undo_paid: 'Payment undone', moved: 'Moved to next quarter', move_back: 'Moved back' };
 // A line's breakdown grouped by payment month: each customer once, with the employee's categories
 // and weightages, the amount, and their rating and comment.
 const byPayment = (items) => {
@@ -187,6 +191,28 @@ function QuarterPayout({ quarter, user }) {
     if (!comment.trim()) { setError('Add a comment saying why the payment is undone.'); return; }
     act('unpaid-all', () => api.payouts.undoAllPaid(quarter, comment), (r) => `${r.undone} line${r.undone === 1 ? ' is' : 's are'} back to approved, not paid.`);
   };
+  // Move to the next quarter / move back: a comment is needed.
+  const askComment = (question) => {
+    const comment = window.prompt(question, '');
+    if (comment === null) return null;
+    if (!comment.trim()) { setError('Add a comment saying why.'); return null; }
+    return comment;
+  };
+  const next = nextQuarterOf(quarter);
+  const moveDraft = (g) => {
+    const comment = askComment(`Move ${g.employee}'s ${moneyIn(g.amount, g.currency)} to ${quarterLabel(next)}? Add a comment saying why:`);
+    if (comment !== null) act(`move-d-${g.employee_id}`, () => api.payouts.moveDraft(quarter, g.employee_id, g.currency, comment), `Moved ${g.employee}'s pay to ${quarterLabel(next)}.`);
+  };
+  const moveLine = (l) => {
+    const comment = askComment(`Move ${l.employee}'s ${l.status} ${moneyIn(l.amount, l.currency)} to ${quarterLabel(next)}? The line is removed here${l.status === 'approved' ? ' (with its approvals)' : ''} and waits in ${quarterLabel(next)}'s To submit. Add a comment saying why:`);
+    if (comment !== null) act(`line-${l.id}`, () => api.payouts.moveLine(l.id, comment), `Moved ${l.employee}'s pay to ${quarterLabel(next)}.`);
+  };
+  const moveBack = (m) => {
+    const comment = askComment(`Move ${m.employee ? `${m.employee}'s` : 'this'} pay back to ${quarterLabel(m.from_quarter)}? It waits there to be submitted again. Add a comment saying why:`);
+    if (comment !== null) act(`move-${m.id}`, () => api.payouts.moveBack(m.id, comment), `Moved back to ${quarterLabel(m.from_quarter)}.`);
+  };
+  // The moves that brought a group's pay into this quarter.
+  const movesIn = (items) => [...new Map(items.filter((i) => i.moved).map((i) => [i.moved.id, i.moved])).values()];
   const undoSubmit = (line) => undo(line, 'submission', api.payouts.undoSubmit, `${line.employee}'s submission was undone; it's back in To submit.`);
 
   const submitted = data.lines.filter((l) => l.status === 'submitted');
@@ -295,7 +321,7 @@ function QuarterPayout({ quarter, user }) {
           <div className="table-wrap">
             <table className="grid list">
               <thead>
-                <tr><th scope="col">Employee</th><th scope="col" className="num">Amount</th><th scope="col">Comment for this employee</th></tr>
+                <tr><th scope="col">Employee</th><th scope="col" className="num">Amount</th><th scope="col">Comment for this employee</th><th><span className="sr-only">Actions</span></th></tr>
               </thead>
               <tbody>
                 {data.draft.map((g) => {
@@ -309,6 +335,12 @@ function QuarterPayout({ quarter, user }) {
                           </button>
                           {ratingSummary(g.items)}
                           {g.sent_back_reason && <div className="warn-text small">Submission undone by {g.sent_back_by}: {g.sent_back_reason}</div>}
+                          {movesIn(g.items).map((m) => (
+                            <div key={m.id} className="small moved-note">
+                              <span className="tag">Moved from {quarterLabel(m.from_quarter)}</span> by {m.by_name}: {m.comment}{' '}
+                              <button className="link" disabled={busy !== ''} onClick={() => moveBack({ ...m, employee: g.employee })}>Move back</button>
+                            </div>
+                          ))}
                         </th>
                         <td className="num strong">{moneyIn(g.amount, g.currency)}</td>
                         <td>
@@ -317,14 +349,17 @@ function QuarterPayout({ quarter, user }) {
                             onChange={(e) => setComments({ ...comments, [g.employee_id]: e.target.value })}
                             onBlur={() => saveComment(g.employee_id)} />
                         </td>
+                        <td className="row-actions small">
+                          <button className="link" disabled={busy !== ''} onClick={() => moveDraft(g)}>Move to {quarterLabel(next)}</button>
+                        </td>
                       </tr>
-                      {open.has(key) && <Breakdown items={g.items} currency={g.currency} colSpan={3} emp={emps.get(g.employee_id)} />}
+                      {open.has(key) && <Breakdown items={g.items} currency={g.currency} colSpan={4} emp={emps.get(g.employee_id)} />}
                     </Fragment>
                   );
                 })}
               </tbody>
               <tfoot>
-                <tr><th scope="row">Total</th><td className="num">{moneyList(totals(data.draft))}</td><td /></tr>
+                <tr><th scope="row">Total</th><td className="num">{moneyList(totals(data.draft))}</td><td colSpan={2} /></tr>
               </tfoot>
             </table>
           </div>
@@ -425,6 +460,7 @@ function QuarterPayout({ quarter, user }) {
                             </button>
                           )}
                           {l.status === 'submitted' && <button className="link danger" disabled={busy !== ''} onClick={() => undoSubmit(l)}>Undo submit</button>}
+                          {l.status !== 'paid' && <button className="link" disabled={busy !== ''} onClick={() => moveLine(l)}>Move to {quarterLabel(next)}</button>}
                           {l.status === 'paid' && <button className="link danger" disabled={busy !== ''} onClick={() => undoPaid(l)}>Undo paid</button>}
                           {(l.status === 'approved' || (l.status === 'submitted' && l.approvals.length > 0)) && (
                             <button className="link danger" disabled={busy !== ''} onClick={() => undoApprove(l)}>Undo approve</button>
@@ -443,6 +479,38 @@ function QuarterPayout({ quarter, user }) {
             </table>
           </div>
           {approved.length === 0 && <p className="muted small">"Mark paid" appears once lines are approved; it uses the Paid on date.</p>}
+        </>
+      )}
+
+      {data.moved_out.length > 0 && (
+        <>
+          <h2>Moved to a later quarter</h2>
+          <div className="table-wrap">
+            <table className="grid list">
+              <thead>
+                <tr>
+                  <th scope="col">Employee</th><th scope="col" className="num">Amount</th><th scope="col">To</th>
+                  <th scope="col">Why</th><th scope="col">By</th><th><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.moved_out.map((m) => (
+                  <tr key={m.id}>
+                    <th scope="row">{m.employee}</th>
+                    <td className="num">{moneyIn(m.amount, m.currency)}</td>
+                    <td><a href={`#/payouts/${m.to_quarter}`}>{quarterLabel(m.to_quarter)}</a></td>
+                    <td className="small">{m.comment}</td>
+                    <td className="small">{m.by_name} · {m.at.slice(0, 16)} UTC</td>
+                    <td className="row-actions small">
+                      {m.can_move_back
+                        ? <button className="link" disabled={busy !== ''} onClick={() => moveBack(m)}>Move back</button>
+                        : <span className="muted" title="Its pay is already submitted there, or moved on again">Can't move back here</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 

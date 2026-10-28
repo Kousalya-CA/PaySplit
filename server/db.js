@@ -396,12 +396,35 @@ db.exec(`
     employee_id INTEGER NOT NULL REFERENCES employees(id),
     currency    TEXT NOT NULL,
     amount      REAL NOT NULL,
-    action      TEXT NOT NULL,                   -- submitted, approval (1 of 2), approved, undo_approve, undo_submit, paid, undo_paid
+    action      TEXT NOT NULL,                   -- submitted, approval (1 of 2), approved, undo_approve, undo_submit, paid, undo_paid, moved, move_back
     comment     TEXT,
     by_name     TEXT,
     at          TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_payout_log_quarter ON payout_log(quarter);
+  -- Pay moved to the next quarter (with a comment): which pay (payout_move_items: a contributor row and
+  -- month), from and to which quarter. The pay waits in the To quarter until it's moved back (reverted)
+  -- or submitted there. Moving it again adds another move.
+  CREATE TABLE IF NOT EXISTS payout_moves (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id    INTEGER NOT NULL REFERENCES employees(id),
+    currency       TEXT NOT NULL,
+    amount         REAL NOT NULL,
+    from_quarter   TEXT NOT NULL,
+    to_quarter     TEXT NOT NULL,
+    comment        TEXT NOT NULL,
+    by_name        TEXT,
+    at             TEXT NOT NULL DEFAULT (datetime('now')),
+    reverted_at    TEXT,
+    reverted_by    TEXT,
+    revert_comment TEXT
+  );
+  CREATE TABLE IF NOT EXISTS payout_move_items (
+    move_id       INTEGER NOT NULL REFERENCES payout_moves(id) ON DELETE CASCADE,
+    allocation_id INTEGER NOT NULL,
+    part          INTEGER NOT NULL,
+    PRIMARY KEY (move_id, allocation_id, part)
+  );
   CREATE TABLE IF NOT EXISTS payout_approvals (
     line_id   INTEGER NOT NULL REFERENCES payout_lines(id) ON DELETE CASCADE,
     admin_id  INTEGER NOT NULL,

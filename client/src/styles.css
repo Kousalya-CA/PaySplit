@@ -474,3 +474,4 @@ td.cell-relieved { background: #fdeceb; }
 td.cell-pip.cell-relieved { background: linear-gradient(90deg, #fff7e6 50%, #fdeceb 50%); }
 .emp-status { margin: 1rem 0 1.5rem; }
 .emp-status h3 { font-size: 1rem; margin: 1rem 0 .4rem; }
+.moved-note { margin-top: .2rem; }
