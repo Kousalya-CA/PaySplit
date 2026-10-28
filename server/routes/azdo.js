@@ -348,13 +348,16 @@ async function customerItems(s, client, clientNames, months) {
 // ---------- SOW tracker -------------------------------------------------------
 // The custom field called "Bucket" (on User Stories and Issues) and its picklist values in order,
 // looked up once per project. order is empty if the picklist can't be read (buckets then sort A to Z).
+// Also the "Business Impact" and "Effort Size" fields shown as columns (null when a field isn't there).
+const squash = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const findField = (fields, name) => fields.find((f) => squash(f.name) === squash(name))
+  || fields.find((f) => squash(String(f.referenceName || '').split('.').pop()) === squash(name));
 const bucketCache = new Map();
 async function bucketField(s) {
   const key = `${s.org}/${s.project}`;
   if (!bucketCache.has(key)) {
     const data = await azFetch(s, 'wit/fields');
-    const field = (data?.value || []).find((f) => f.name?.toLowerCase() === 'bucket')
-      || (data?.value || []).find((f) => /\.bucket$/i.test(f.referenceName || ''));
+    const field = findField(data?.value || [], 'Bucket');
     let order = [];
     if (field) {
       try {
@@ -365,7 +368,12 @@ async function bucketField(s) {
         }
       } catch { /* no access to the picklist: sort A to Z */ }
     }
-    bucketCache.set(key, { ref: field?.referenceName || null, order });
+    bucketCache.set(key, {
+      ref: field?.referenceName || null,
+      order,
+      impact: findField(data?.value || [], 'Business Impact')?.referenceName || null,
+      effort: findField(data?.value || [], 'Effort Size')?.referenceName || null,
+    });
   }
   return bucketCache.get(key);
 }
@@ -377,7 +385,7 @@ const fieldText = (v) => String(v == null ? '' : typeof v === 'object' ? v.displ
 // A sprint month's User Stories and Issues (in the configured area paths and sprints) with their
 // Bucket and child Tasks and Bugs. Removed items are left out.
 async function sowItems(s, sprints, areas) {
-  const { ref: bucket } = await bucketField(s);
+  const { ref: bucket, impact, effort } = await bucketField(s);
   const client = await clientField(s);
   const states = await stateCategories(s);
   const pairs = sprints.map((sp) => `([System.AreaPath] UNDER '${esc(sp.areaPath)}' AND [System.IterationPath] UNDER '${esc(sp.path)}')`);
@@ -418,6 +426,8 @@ async function sowItems(s, sprints, areas) {
     return {
       ...row(p),
       bucket: bucket ? fieldText(p.fields[bucket]) : '',
+      businessImpact: impact ? fieldText(p.fields[impact]) : '',
+      effortSize: effort ? fieldText(p.fields[effort]) : '',
       children: kids.sort((a, b) => a.type.localeCompare(b.type) || a.id - b.id),
       // Hours from its Tasks and Bugs.
       hours: { original: sum('original'), completed: sum('completed'), remaining: sum('remaining') },
@@ -461,7 +471,7 @@ export function registerAzdoRoutes(router) {
     }
 
     // Buckets in the picklist's order (values not in it after, A to Z), then "No bucket".
-    const { order } = await bucketField(s);
+    const { order, impact, effort } = await bucketField(s);
     const names = [...new Set(cached.items.map((i) => i.bucket))];
     const rank = (n) => (n === '' ? 2e9 : order.includes(n) ? order.indexOf(n) : 1e9);
     names.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
@@ -472,6 +482,8 @@ export function registerAzdoRoutes(router) {
       fetchedAt: new Date(cached.at).toISOString(),
       buckets: names.map((name) => ({ name, items: cached.items.filter((i) => i.bucket === name).sort((a, b) => a.id - b.id) })),
       picklist: order,
+      // Which optional columns Azure DevOps has.
+      columns: { businessImpact: Boolean(impact), effortSize: Boolean(effort) },
       ...calendarView(),
     };
   });

@@ -109,7 +109,7 @@ export default function SowTracker({ isAdmin }) {
   const clients = [...new Set(all.map((i) => i.client).filter(Boolean))].sort();
   const words = search.toLowerCase().split(/\s+/).filter(Boolean);
   const matches = (i) => (!team || i.area === team) && (!client || i.client === client)
-    && words.every((w) => [i.id, i.title, i.assignedTo, ...i.children.map((c) => `${c.id} ${c.title} ${c.assignedTo}`)].join(' ').toLowerCase().includes(w));
+    && words.every((w) => [i.id, i.title, i.assignedTo, i.businessImpact, i.effortSize, ...i.children.map((c) => `${c.id} ${c.title} ${c.assignedTo}`)].join(' ').toLowerCase().includes(w));
   const peopleNames = new Map();
   for (const i of all) for (const r of [i, ...i.children]) if (r.assignedEmail) peopleNames.set(r.assignedEmail, r.assignedTo || r.assignedEmail);
   const peopleList = [...peopleNames].sort((a, b) => a[1].localeCompare(b[1]));
@@ -136,6 +136,9 @@ export default function SowTracker({ isAdmin }) {
     };
   };
   const total = stats(buckets.flatMap((b) => b.items));
+  // Business Impact and Effort Size columns (on User Stories and Issues), when Azure DevOps has them.
+  const showImpact = Boolean(data.columns?.businessImpact);
+  const showEffort = Boolean(data.columns?.effortSize);
   // The sprint's calendar (for the chosen team's sprint when a team is picked) and capacity.
   const holidays = data.holidays || [];
   const hpd = data.hours_per_day || 8;
@@ -203,12 +206,12 @@ export default function SowTracker({ isAdmin }) {
   const year = month === 'undated' ? 'undated' : month.slice(0, 4);
 
   const exportCsv = () => {
-    const header = ['Bucket', 'Level', 'ID', 'Type', 'Title', 'State', 'Team', 'Client', 'Assigned to', 'Original', 'Completed', 'Remaining', 'Link'];
+    const header = ['Bucket', 'Level', 'ID', 'Type', 'Title', 'State', 'Business impact', 'Effort size', 'Team', 'Client', 'Assigned to', 'Original', 'Completed', 'Remaining', 'Link'];
     const lines = [];
     for (const b of buckets) {
       for (const i of b.items) {
-        lines.push([b.name || 'No bucket', 'Item', i.id, i.type, i.title, i.state, i.area, i.client, i.assignedTo, i.hours.original, i.hours.completed, i.hours.remaining, i.url]);
-        for (const c of i.children) lines.push([b.name || 'No bucket', 'Task/Bug', c.id, c.type, c.title, c.state, c.area, c.client, c.assignedTo, c.original, c.completed, c.remaining, c.url]);
+        lines.push([b.name || 'No bucket', 'Item', i.id, i.type, i.title, i.state, i.businessImpact, i.effortSize, i.area, i.client, i.assignedTo, i.hours.original, i.hours.completed, i.hours.remaining, i.url]);
+        for (const c of i.children) lines.push([b.name || 'No bucket', 'Task/Bug', c.id, c.type, c.title, c.state, '', '', c.area, c.client, c.assignedTo, c.original, c.completed, c.remaining, c.url]);
       }
     }
     const csv = [header, ...lines].map((l) => l.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -370,6 +373,7 @@ export default function SowTracker({ isAdmin }) {
                       <thead>
                         <tr>
                           <th scope="col" className="wi-title">Title</th><th scope="col">Type</th><th scope="col">State</th>
+                          {showImpact && <th scope="col">Business impact</th>}{showEffort && <th scope="col">Effort size</th>}
                           <th scope="col">Team</th>{clients.length > 0 && <th scope="col">Client</th>}<th scope="col">Assigned to</th>
                           <th scope="col" className="num">Original</th><th scope="col" className="num">Completed</th><th scope="col" className="num">Remaining</th>
                         </tr>
@@ -392,6 +396,8 @@ export default function SowTracker({ isAdmin }) {
                                 </th>
                                 <td>{i.type}</td>
                                 <td className={i.closed ? 'ok-text' : ''}>{i.state}</td>
+                                {showImpact && <td>{i.businessImpact || <span className="muted">–</span>}</td>}
+                                {showEffort && <td>{i.effortSize || <span className="muted">–</span>}</td>}
                                 <td className="small" title={i.areaPath}>{i.area}</td>
                                 {clients.length > 0 && <td>{i.client}</td>}
                                 <td>{i.assignedTo || <span className="muted">Unassigned</span>}</td>
@@ -406,6 +412,7 @@ export default function SowTracker({ isAdmin }) {
                                   </th>
                                   <td>{c.type}</td>
                                   <td className={c.closed ? 'ok-text' : ''}>{c.state}</td>
+                                  {showImpact && <td />}{showEffort && <td />}
                                   <td className="small" title={c.areaPath}>{c.area}</td>
                                   {clients.length > 0 && <td>{c.client}</td>}
                                   <td>{c.assignedTo || <span className="muted">Unassigned</span>}</td>
