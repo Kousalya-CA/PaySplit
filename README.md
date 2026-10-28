@@ -92,6 +92,7 @@ Open http://localhost:5173.
 | Customer page | Pick a period, enter revenue, add contributors and weightages, then save     |
 | Employees     | Add, rename, and mark employees active or inactive. Admins set a **relieved date** and **PIPs** (From/To months, several allowed) on the employee page; pay isn't affected, but the name is highlighted on every page in PIP months (amber) and from the relieved month on (red) |
 | All payments  | Every payment row, with filters and a CSV download                         |
+| SOW Tracker   | Everyone: pick a sprint, then its Azure DevOps User Stories and Issues grouped by the **Bucket** picklist field (in the picklist order, then "No bucket"), each drilling into its Tasks and Bugs, with closed counts, hours, Team/Client/search filters and a CSV download. Read only |
 | Deployments   | Everyone: what's deployed at each customer (product, service versions, features, environment) |
 | Users         | Admins only: add people as Admin or Employee, send setup links, remove access |
 | Azure DevOps  | Admins only: organisation, project, area paths and their sprints           |

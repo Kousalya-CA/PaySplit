@@ -475,3 +475,13 @@ td.cell-pip.cell-relieved { background: linear-gradient(90deg, #fff7e6 50%, #fde
 .emp-status { margin: 1rem 0 1.5rem; }
 .emp-status h3 { font-size: 1rem; margin: 1rem 0 .4rem; }
 .moved-note { margin-top: .2rem; }
+
+/* SOW Tracker: a sprint's User Stories and Issues by Bucket. */
+.sow-total { margin: .75rem 0; }
+.sow-bucket { border: 2px solid var(--line); border-radius: .8rem; background: var(--surface); margin: .6rem 0; padding: .6rem .9rem; }
+.sow-bucket-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .8rem; width: 100%; text-align: left; }
+.sow-bucket-name { font-size: 1.05rem; }
+.sow-bucket-stats { font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.sow-bar { display: inline-block; width: 5rem; vertical-align: middle; }
+.sow-bucket .table-wrap { margin-top: .6rem; }
+.sow-nokids { display: inline-block; width: .8em; }

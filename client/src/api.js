@@ -47,6 +47,7 @@ export const api = {
     updatePip: (pipId, body) => request(`/pips/${pipId}`, { method: 'PUT', body }),
     removePip: (pipId) => request(`/pips/${pipId}`, { method: 'DELETE' }),
   },
+  sow: (month, refresh) => request(`/sow?month=${encodeURIComponent(month || '')}${refresh ? '&refresh=1' : ''}`),
   azdo: {
     config: () => request('/azdo/config'),
     saveConfig: (body) => request('/azdo/config', { method: 'PUT', body }),

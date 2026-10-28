@@ -1,6 +1,6 @@
 // Azure DevOps sprint board: settings (organisation, project, area paths and their sprints) and
 // each employee's work by month, found by their email: User Stories and Issues with their child
-// Tasks and Bugs.
+// Tasks and Bugs. The SOW Tracker shows a sprint's User Stories and Issues grouped by their Bucket field.
 // The PAT is read from the AZ_PAT environment variable only; it's never stored or sent to the browser.
 import { db } from '../db.js';
 import { HttpError } from '../http.js';
@@ -46,9 +46,10 @@ function requireSettings() {
 }
 
 // Call the Azure DevOps REST API for the configured project. Errors become readable messages.
-async function azFetch(s, path, { method = 'GET', body } = {}) {
+async function azFetch(s, path, { method = 'GET', body, org = false } = {}) {
   const sep = path.includes('?') ? '&' : '?';
-  const url = `https://dev.azure.com/${encodeURIComponent(s.org)}/${encodeURIComponent(s.project)}/_apis/${path}${sep}api-version=${API_VERSION}`;
+  const scope = org ? encodeURIComponent(s.org) : `${encodeURIComponent(s.org)}/${encodeURIComponent(s.project)}`;
+  const url = `https://dev.azure.com/${scope}/_apis/${path}${sep}api-version=${API_VERSION}`;
   let res;
   try {
     res = await fetch(url, {
@@ -323,10 +324,134 @@ async function customerItems(s, client, clientNames, months) {
   }
   return records;
 }
+// ---------- SOW tracker -------------------------------------------------------
+// The custom field called "Bucket" (on User Stories and Issues) and its picklist values in order,
+// looked up once per project. order is empty if the picklist can't be read (buckets then sort A to Z).
+const bucketCache = new Map();
+async function bucketField(s) {
+  const key = `${s.org}/${s.project}`;
+  if (!bucketCache.has(key)) {
+    const data = await azFetch(s, 'wit/fields');
+    const field = (data?.value || []).find((f) => f.name?.toLowerCase() === 'bucket')
+      || (data?.value || []).find((f) => /\.bucket$/i.test(f.referenceName || ''));
+    let order = [];
+    if (field) {
+      try {
+        const def = field.picklistId ? field : await azFetch(s, `wit/fields/${encodeURIComponent(field.referenceName)}`);
+        if (def?.picklistId) {
+          const list = await azFetch(s, `work/processes/lists/${encodeURIComponent(def.picklistId)}`, { org: true });
+          order = (list?.items || []).map((v) => String(v));
+        }
+      } catch { /* no access to the picklist: sort A to Z */ }
+    }
+    bucketCache.set(key, { ref: field?.referenceName || null, order });
+  }
+  return bucketCache.get(key);
+}
+
+const SOW_TTL = 5 * 60 * 1000;
+const sowCache = new Map();
+const fieldText = (v) => String(v == null ? '' : typeof v === 'object' ? v.displayName ?? '' : v).trim();
+
+// A sprint month's User Stories and Issues (in the configured area paths and sprints) with their
+// Bucket and child Tasks and Bugs. Removed items are left out.
+async function sowItems(s, sprints, areas) {
+  const { ref: bucket } = await bucketField(s);
+  const client = await clientField(s);
+  const states = await stateCategories(s);
+  const pairs = sprints.map((sp) => `([System.AreaPath] UNDER '${esc(sp.areaPath)}' AND [System.IterationPath] UNDER '${esc(sp.path)}')`);
+  const query = `SELECT [System.Id] FROM WorkItems
+    WHERE [System.TeamProject] = @project AND [System.WorkItemType] IN (${PARENT_TYPES.map((t) => `'${t}'`).join(', ')})
+      AND (${pairs.join(' OR ')})
+    ORDER BY [System.Id]`;
+  const found = await azFetch(s, 'wit/wiql', { method: 'POST', body: { query } });
+  const parents = await workItemsWithLinks(s, (found?.workItems || []).map((w) => w.id));
+  const children = new Map((await workItemsWithLinks(s, [...new Set(parents.flatMap(childIdsOf))])).map((w) => [w.id, w]));
+
+  const row = (w) => {
+    const f = w.fields || {};
+    const category = stateCategory(states, f[F.type], f[F.state]);
+    return {
+      id: w.id,
+      type: f[F.type],
+      title: f[F.title],
+      state: f[F.state],
+      removed: category === 'Removed',
+      closed: category === 'Completed' || category === 'Resolved',
+      area: areaLabel(f[F.area], areas),
+      areaPath: f[F.area],
+      sprint: String(f[F.iteration] || '').split('\\').pop(),
+      client: client ? fieldText(f[client]) : '',
+      assignedTo: f[F.assignedTo]?.displayName || '',
+      original: f[F.original] || 0,
+      completed: f[F.completed] || 0,
+      remaining: f[F.remaining] || 0,
+      url: `https://dev.azure.com/${encodeURIComponent(s.org)}/${encodeURIComponent(s.project)}/_workitems/edit/${w.id}`,
+    };
+  };
+  const items = parents.map((p) => {
+    const kids = childIdsOf(p).map((id) => children.get(id))
+      .filter((w) => w && CHILD_TYPES.includes(w.fields[F.type])).map(row).filter((r) => !r.removed);
+    const sum = (k) => kids.reduce((n, r) => n + r[k], 0);
+    return {
+      ...row(p),
+      bucket: bucket ? fieldText(p.fields[bucket]) : '',
+      children: kids.sort((a, b) => a.type.localeCompare(b.type) || a.id - b.id),
+      // Hours from its Tasks and Bugs.
+      hours: { original: sum('original'), completed: sum('completed'), remaining: sum('remaining') },
+    };
+  }).filter((r) => !r.removed);
+  return { bucket, items };
+}
+
 export function registerAzdoRoutes(router) {
   const admin = { admin: true };
 
   router.get('/api/azdo/config', () => configView(), admin);
+
+  // SOW Tracker (everyone signed in): a sprint month's User Stories and Issues grouped by Bucket, in the
+  // picklist's order, each with its Tasks and Bugs. ?month=2026-10 (default: this month's sprints, or the
+  // newest); ?refresh=1 skips the 5-minute cache.
+  router.get('/api/sow', async ({ req }) => {
+    const s = settings();
+    const iterations = q.iterations.all();
+    const areas = q.areas.all().map((a) => ({ ...a, iterations: iterations.filter((i) => i.area_id === a.id) }));
+    if (!s.org || !s.project || !areas.some((a) => a.iterations.length)) {
+      return { months: [], message: 'Azure DevOps isn\'t set up yet. An admin adds area paths and sprints on the Azure DevOps page.' };
+    }
+    const months = sprintMonths(areas);
+    const search = new URL(req.url, 'http://x').searchParams;
+    const asked = search.get('month') || '';
+    const now = new Date().toISOString().slice(0, 7);
+    const chosen = months.find((m) => m.month === asked)
+      || months.find((m) => m.month === now)
+      || months.find((m) => m.month !== 'undated' && m.month <= now)
+      || months[0];
+    requireSettings();
+    const key = `${s.org}/${s.project}/${chosen.month}`;
+    let cached = sowCache.get(key);
+    if (!cached || search.get('refresh') || Date.now() - cached.at > SOW_TTL) {
+      cached = { at: Date.now(), ...(await sowItems(s, chosen.sprints, areas)) };
+      sowCache.set(key, cached);
+    }
+    if (!cached.bucket) {
+      return { months, month: chosen.month, sprints: chosen.sprints, message: 'No field called "Bucket" was found in Azure DevOps, so items can\'t be grouped.' };
+    }
+
+    // Buckets in the picklist's order (values not in it after, A to Z), then "No bucket".
+    const { order } = await bucketField(s);
+    const names = [...new Set(cached.items.map((i) => i.bucket))];
+    const rank = (n) => (n === '' ? 2e9 : order.includes(n) ? order.indexOf(n) : 1e9);
+    names.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    return {
+      months,
+      month: chosen.month,
+      sprints: chosen.sprints,
+      fetchedAt: new Date(cached.at).toISOString(),
+      buckets: names.map((name) => ({ name, items: cached.items.filter((i) => i.bucket === name).sort((a, b) => a.id - b.id) })),
+      picklist: order,
+    };
+  });
 
   router.put('/api/azdo/config', ({ body }) => {
     const org = String(body.org ?? '').trim();
