@@ -654,3 +654,4 @@ a.primary, a.secondary { text-decoration: none; }
 .sow-dl dd { margin: 0; font-variant-numeric: tabular-nums; }
 .sow-dl .sow-dl-title { font-weight: 800; color: var(--ink); padding-bottom: .2rem; border-bottom: 1px solid var(--line); margin-bottom: .1rem; }
 .sow-fit { margin-left: .4rem; font-size: .8rem; font-weight: 800; padding: .02rem .5rem; border-radius: 1rem; background: var(--green-soft); color: var(--green); white-space: nowrap; }
+.sow-cal-brief { color: var(--muted); }

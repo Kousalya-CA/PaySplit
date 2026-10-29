@@ -179,6 +179,12 @@ export default function SowTracker({ isAdmin, user }) {
   const [staff, setStaff] = useState(null); // employees, for adding leave (admins)
   const [newLeave, setNewLeave] = useState({ employee_id: '', from_day: '', to_day: '', half: false, note: '' });
   const [logging, setLogging] = useState(null); // task id with the Log time form open
+  // The days and hours summary can be collapsed; the choice is remembered in this browser.
+  const [showDays, setShowDays] = useState(() => { try { return localStorage.getItem('gf-sprint-days') !== 'hidden'; } catch { return true; } });
+  const toggleDays = () => setShowDays((v) => {
+    try { localStorage.setItem('gf-sprint-days', v ? 'hidden' : 'shown'); } catch { /* not saved */ }
+    return !v;
+  });
 
   const load = (m, refresh = false) => {
     setLoading(true);
@@ -436,9 +442,24 @@ export default function SowTracker({ isAdmin, user }) {
           {cal && (
             <div className="sow-calendar">
               <div className="sow-cal-head">
-                <strong>{shownSprints.length ? [...new Set(shownSprints.map((sp) => sp.name))].join(', ') : 'Sprint'}</strong>
+                <button type="button" className="drill" aria-expanded={showDays} onClick={toggleDays}
+                  title={showDays ? 'Hide the days and hours' : 'Show the days and hours'}>
+                  <span className="drill-caret" aria-hidden="true">▸</span>
+                  {shownSprints.length ? [...new Set(shownSprints.map((sp) => sp.name))].join(', ') : 'Sprint'}
+                </button>
                 <span className="muted"> · {dayLabel(cal.from)} to {dayLabel(cal.to)}</span>
+                {/* Collapsed: the key figures on one line. */}
+                {!showDays && (
+                  <span className="sow-cal-brief">
+                    {' '}· {days(cal.left)} left of {cal.working}
+                    {people > 0 && <> · capacity {hours(teamCapacity) || 0} h · remaining work {hours(total.remaining) || 0} h of {hours(leftCapacity) || 0} h{' '}
+                      {total.remaining > leftCapacity
+                        ? <span className="sow-flag overrun">Over by {hours(total.remaining - leftCapacity)} h</span>
+                        : <span className="sow-fit">Fits</span>}</>}
+                  </span>
+                )}
               </div>
+              {showDays && (<>
               {/* The sprint's days and hours, one figure per line: days on the left, hours on the right. */}
               <div className="sow-figures">
                 <dl className="sow-dl">
@@ -506,6 +527,7 @@ export default function SowTracker({ isAdmin, user }) {
               {sprintLeaves.length > 0 && (
                 <p className="small sow-cal-leaves">Leave: {sprintLeaves.map((l) => `${person ? '' : `${l.name} `}${leaveLabel(l)}`).join(' · ')}</p>
               )}
+              </>)}
             </div>
           )}
 
