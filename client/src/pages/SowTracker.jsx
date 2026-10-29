@@ -168,6 +168,7 @@ export default function SowTracker({ isAdmin, user }) {
   const [team, setTeam] = useState('');
   const [client, setClient] = useState('');
   const [search, setSearch] = useState('');
+  const [status, setStatus] = useState(''); // a state name, '__open' (not closed), or '' for all
   const [openBuckets, setOpenBuckets] = useState(() => new Set());
   const [openItems, setOpenItems] = useState(() => new Set());
   const [showHolidays, setShowHolidays] = useState(false);
@@ -205,13 +206,27 @@ export default function SowTracker({ isAdmin, user }) {
   const toggleBucket = toggle(setOpenBuckets);
   const toggleItem = toggle(setOpenItems);
 
-  // Filters: team (area), client, and words in the ID, title, assignee or a task's title.
+  // Filters: team (area) and client on the User Story / Issue; status and search narrow the Tasks and
+  // Bugs too. A search that matches a task shows its story with that task alone; a search that matches
+  // the story itself shows the story with all its tasks (still within the status).
   const all = (data.buckets || []).flatMap((b) => b.items);
   const teams = [...new Set(all.map((i) => i.area))].sort();
   const clients = [...new Set(all.map((i) => i.client).filter(Boolean))].sort();
+  const states = [...new Set(all.flatMap((i) => [i.state, ...i.children.map((c) => c.state)]).filter(Boolean))].sort();
   const words = search.toLowerCase().split(/\s+/).filter(Boolean);
-  const matches = (i) => (!team || i.area === team) && (!client || i.client === client)
-    && words.every((w) => [i.id, i.title, i.assignedTo, i.businessImpact, i.effortSize, ...i.children.map((c) => `${c.id} ${c.title} ${c.assignedTo}`)].join(' ').toLowerCase().includes(w));
+  const matches = (i) => (!team || i.area === team) && (!client || i.client === client);
+  const statusOk = (r) => !status || (status === '__open' ? !r.closed : r.state === status);
+  const searchOk = (r) => words.every((w) => [r.id, r.title, r.assignedTo, r.businessImpact, r.effortSize].join(' ').toLowerCase().includes(w));
+  const narrowing = Boolean(status || words.length);
+  const refine = (i) => {
+    if (!narrowing) return i;
+    const storyHit = searchOk(i);
+    const kids = i.children.filter((c) => statusOk(c) && (storyHit || searchOk(c)));
+    if (!kids.length && !(storyHit && statusOk(i))) return null;
+    if (kids.length === i.children.length) return i;
+    const sum = (k) => kids.reduce((n, c) => n + c[k], 0);
+    return { ...i, children: kids, hiddenKids: i.children.length - kids.length, hours: { original: sum('original'), completed: sum('completed'), remaining: sum('remaining') } };
+  };
   const peopleNames = new Map();
   for (const i of all) for (const r of [i, ...i.children]) if (r.assignedEmail) peopleNames.set(r.assignedEmail, r.assignedTo || r.assignedEmail);
   const peopleList = [...peopleNames].sort((a, b) => a[1].localeCompare(b[1]));
@@ -222,7 +237,11 @@ export default function SowTracker({ isAdmin, user }) {
     const sum = (k) => kids.reduce((n, c) => n + c[k], 0);
     return { ...i, children: kids, hours: { original: sum('original'), completed: sum('completed'), remaining: sum('remaining') } };
   };
-  const buckets = (data.buckets || []).map((b) => ({ ...b, items: b.items.map(forPerson).filter(Boolean).filter(matches) })).filter((b) => b.items.length);
+  const buckets = (data.buckets || []).map((b) => ({ ...b, items: b.items.map(forPerson).filter(Boolean).map(refine).filter(Boolean).filter(matches) })).filter((b) => b.items.length);
+  // While searching or filtering by status, every match is open so it can be seen straight away.
+  // (A click still collapses one: the click flips its default.)
+  const bucketOpen = (name) => narrowing !== openBuckets.has(name);
+  const itemOpen = (i) => (narrowing && i.children.length > 0) !== openItems.has(i.id);
 
   const stats = (items) => {
     const kids = items.flatMap((i) => i.children);
@@ -397,8 +416,17 @@ export default function SowTracker({ isAdmin, user }) {
                 </select>
               </label>
             )}
-            <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search ID, title or person" aria-label="Search" />
-            {buckets.length > 0 && (
+            <label className="wi-filter">
+              <span>Status</span>
+              <select value={status} onChange={(e) => { setStatus(e.target.value); setOpenBuckets(new Set()); setOpenItems(new Set()); }}>
+                <option value="">All statuses</option>
+                <option value="__open">Open (not closed)</option>
+                {states.map((st) => <option key={st} value={st}>{st}</option>)}
+              </select>
+            </label>
+            <input type="search" value={search} onChange={(e) => { setSearch(e.target.value); setOpenBuckets(new Set()); setOpenItems(new Set()); }} placeholder="Search ID, title or person" aria-label="Search" />
+            {narrowing && <button className="link" onClick={() => { setSearch(''); setStatus(''); }}>Clear filters</button>}
+            {buckets.length > 0 && !narrowing && (
               <button className="link" onClick={() => setOpenBuckets(openBuckets.size ? new Set() : new Set(buckets.map((b) => b.name)))}>
                 {openBuckets.size ? 'Collapse all' : 'Expand all'}
               </button>
@@ -468,7 +496,7 @@ export default function SowTracker({ isAdmin, user }) {
             <div className="empty"><p>{all.length ? 'Nothing matches these filters.' : 'No User Stories or Issues in this sprint.'}</p></div>
           ) : buckets.map((b) => {
             const st = stats(b.items);
-            const open = openBuckets.has(b.name);
+            const open = bucketOpen(b.name);
             return (
               <section key={b.name || '(none)'} className="sow-bucket">
                 <button type="button" className="drill sow-bucket-head" aria-expanded={open} onClick={() => toggleBucket(b.name)}>
@@ -495,7 +523,7 @@ export default function SowTracker({ isAdmin, user }) {
                       </thead>
                       <tbody>
                         {b.items.map((i) => {
-                          const shown = openItems.has(i.id);
+                          const shown = itemOpen(i);
                           return (
                             <Fragment key={i.id}>
                               <tr className="wi-parent">
@@ -507,7 +535,7 @@ export default function SowTracker({ isAdmin, user }) {
                                     </button>
                                   ) : <span className="sow-nokids" aria-hidden="true" />}
                                   {' '}<a href={i.url} target="_blank" rel="noreferrer">{i.id}</a> {i.title}
-                                  {i.children.length > 0 && <small className="muted"> ({i.children.length})</small>}
+                                  {i.children.length > 0 && <small className="muted"> ({i.children.length}{i.hiddenKids ? ` of ${i.children.length + i.hiddenKids}` : ''})</small>}
                                 </th>
                                 <td>{i.type}</td>
                                 <td className={i.closed ? 'ok-text' : ''}>{i.state}</td>
