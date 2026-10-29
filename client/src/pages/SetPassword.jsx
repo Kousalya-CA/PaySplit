@@ -44,7 +44,7 @@ export default function SetPassword({ token, onSuccess, onCancel }) {
       </AuthLayout>
     );
   }
-  if (!invite) return <div className="splash" aria-busy="true">PaySplit</div>;
+  if (!invite) return <div className="splash" aria-busy="true">Growthfactor</div>;
 
   return (
     <AuthLayout title={`Welcome, ${invite.name.split(' ')[0]}`} subtitle={`Choose a password for ${invite.email}. You'll use it to log in from now on.`}>

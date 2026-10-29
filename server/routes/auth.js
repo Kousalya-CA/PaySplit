@@ -29,7 +29,7 @@ export function registerAuthRoutes(router) {
 
   // First-time setup only: creates the owner account when the database has no users.
   router.post('/api/auth/setup', ({ body, setHeader }) => {
-    if (hasUsers()) throw new HttpError(403, 'PaySplit is already set up. Ask your admin to add you.');
+    if (hasUsers()) throw new HttpError(403, 'Growthfactor is already set up. Ask your admin to add you.');
     const name = String(body.name ?? '').trim();
     const email = String(body.email ?? '').trim().toLowerCase();
     const password = String(body.password ?? '');

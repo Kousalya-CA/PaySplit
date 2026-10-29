@@ -24,7 +24,7 @@ export default function App() {
 
   // If the session expires, any API call sends us back to the login page.
   useEffect(() => {
-    const onExpired = () => setUser(null);
+    const onExpired = () => { if (document.getElementById('blacktops-widget')) window.location.reload(); else setUser(null); };
     const onHash = () => setToken(inviteToken());
     window.addEventListener('paysplit:logout', onExpired);
     window.addEventListener('hashchange', onHash);
@@ -36,7 +36,8 @@ export default function App() {
 
   const logout = async () => {
     await api.logout().catch(() => {});
-    setUser(null);
+    window.location.hash = '';
+    window.location.reload();
   };
 
   const signedIn = (u) => {
@@ -44,7 +45,7 @@ export default function App() {
     setUser(u);
   };
 
-  if (checking) return <div className="splash" aria-busy="true">PaySplit</div>;
+  if (checking) return <div className="splash" aria-busy="true">Growthfactor</div>;
   if (token) {
     return (
       <SetPassword

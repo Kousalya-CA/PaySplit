@@ -542,3 +542,37 @@ label.check { display: inline-flex; align-items: center; gap: .35rem; font-weigh
 .ts-key.weekend { background: var(--paper); border: 1px solid var(--line); }
 .ts-key.holiday { background: var(--danger-soft); }
 .ts-key.leave { background: #efe7fb; }
+
+/* Growthfactor: the logo mark (an SVG) and a colourful login page. */
+.logo-mark { width: 1.6rem; height: 1.6rem; flex: none; background: none; box-shadow: none; }
+.logo-mobile .logo-mark { background: none; box-shadow: none; }
+.logo-mobile { color: var(--bar); }
+.auth-brand {
+  background:
+    radial-gradient(circle at 88% 8%, rgba(247, 179, 43, .45), transparent 38%),
+    radial-gradient(circle at 8% 95%, rgba(31, 157, 116, .35), transparent 40%),
+    linear-gradient(140deg, var(--bar) 0%, var(--indigo) 58%, var(--pink) 100%);
+}
+.auth-brand .tagline { max-width: 20ch; }
+.bill { box-shadow: 0 24px 50px rgba(15, 10, 60, .35); }
+.bill-head span { font-weight: 600; }
+.bill-bar { display: flex; gap: 4px; }
+.bill-bar span { height: .7rem; border-radius: 3px; }
+.bill-bar .seg-0 { background: var(--bar); }
+.bill-bar .seg-1 { background: var(--saffron); }
+.bill-bar .seg-2 { background: var(--pink); }
+.bill-bar .seg-3 { background: var(--green); }
+.bill-people li { grid-template-columns: auto 1fr auto 5.4rem; }
+.bill-people small { color: var(--muted); font-weight: 600; margin-left: .2rem; }
+.avatar.av-0 { background: #d8eef8; color: var(--bar); }
+.avatar.av-1 { background: #fdefd2; color: #8a5a00; }
+.avatar.av-2 { background: #fde0ec; color: var(--pink-2); }
+.avatar.av-3 { background: var(--green-soft); color: var(--green); }
+.status.ok { background: var(--green-soft); color: var(--green); }
+.status.paid { background: #e7e2fb; color: var(--indigo); }
+.status.wait { background: #fbeed8; color: var(--warn); }
+.auth-main {
+  background: linear-gradient(180deg, var(--surface) 0%, var(--paper) 100%);
+  border-top: 6px solid var(--saffron);
+  border-image: linear-gradient(90deg, var(--bar), var(--indigo), var(--pink), var(--saffron)) 1;
+}

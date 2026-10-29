@@ -39,7 +39,7 @@ export default function AzureDevOpsPage() {
     <section>
       <div className="page-head"><h1>Azure DevOps</h1></div>
       <p className="muted">
-        PaySplit reads each employee's tasks from these area paths and sprints, matching people by their email.
+        Growthfactor reads each employee's tasks from these area paths and sprints, matching people by their email.
       </p>
 
       <form className="panel" onSubmit={(e) => { e.preventDefault(); run('save', () => api.azdo.saveConfig(form), (c) => { show(c); setNotice('Saved.'); }); }}>
@@ -60,7 +60,7 @@ export default function AzureDevOpsPage() {
             ? <strong className="ok-text">set on the server</strong>
             : <strong className="warn-text">not set</strong>}
           <span className="muted">
-            {' '}It's read from the <code>AZ_PAT</code> app setting on the server and is never stored in PaySplit.
+            {' '}It's read from the <code>AZ_PAT</code> app setting on the server and is never stored in Growthfactor.
             It needs Work Items (Read) access.
           </span>
         </p>
@@ -87,7 +87,7 @@ export default function AzureDevOpsPage() {
               <p className="muted small"><code>{a.path}</code></p>
             </div>
             <button className="link danger" disabled={busy === `area-${a.id}`}
-              onClick={() => window.confirm(`Remove ${a.path} and its sprints from PaySplit? Nothing changes in Azure DevOps.`)
+              onClick={() => window.confirm(`Remove ${a.path} and its sprints from Growthfactor? Nothing changes in Azure DevOps.`)
                 && run(`area-${a.id}`, () => api.azdo.removeArea(a.id))}>
               Remove area path
             </button>

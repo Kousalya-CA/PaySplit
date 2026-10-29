@@ -7,6 +7,8 @@ import PaymentsPage from '../pages/PaymentsPage.jsx';
 import UsersPage, { roleLabel } from '../pages/UsersPage.jsx';
 import EmployeeDetail from '../pages/EmployeeDetail.jsx';
 import SowTracker from '../pages/SowTracker.jsx';
+import Logo from './Logo.jsx';
+import { useEffect } from 'react';
 import Timesheet from '../pages/Timesheet.jsx';
 import AzureDevOpsPage from '../pages/AzureDevOpsPage.jsx';
 import DeploymentsPage, { CustomerDeployments } from '../pages/Deployments.jsx';
@@ -27,8 +29,23 @@ const NAV = [
   ['azure-devops', 'Azure DevOps', { admin: true }],
 ];
 
+// The BlackTops widget is for signed-in people only, so it's loaded here and never on the login page.
+function useBlackTopsWidget() {
+  useEffect(() => {
+    if (document.getElementById('blacktops-widget')) return;
+    const s = document.createElement('script');
+    s.id = 'blacktops-widget';
+    s.src = 'https://api.blacktops.ai/widget/blacktop.js';
+    s.async = true;
+    s.dataset.projectId = 'growthfactor-dev';
+    s.dataset.environment = 'dev';
+    document.head.appendChild(s);
+  }, []);
+}
+
 export default function Shell({ user, onLogout }) {
   const [section = 'summary', id, sub] = useHashRoute();
+  useBlackTopsWidget();
   const isAdmin = user.role === 'admin';
 
   let page;
@@ -49,7 +66,7 @@ export default function Shell({ user, onLogout }) {
   return (
     <div className="app">
       <header className="topbar">
-        <a className="logo" href="#/summary"><span className="logo-mark" aria-hidden="true" />PaySplit</a>
+        <Logo href="#/summary" />
         <nav aria-label="Main">
           {NAV.filter(([, , opts]) => !opts?.admin || isAdmin).map(([key, label]) => (
             <a key={key} href={`#/${key}`} aria-current={section === key ? 'page' : undefined}>{label}</a>

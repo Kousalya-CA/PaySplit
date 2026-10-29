@@ -149,7 +149,7 @@ export default function TeamProgress({ customer }) {
                   ))}
                   {data.others && (
                     <Row row={data.others} className="wi-other" open={open.has('others')} onToggle={() => toggle('others')} items={itemsFor('others')}
-                      name={<span title={data.others.names.join(', ')}>Not in PaySplit <small className="muted">({data.others.names.join(', ')})</small></span>}
+                      name={<span title={data.others.names.join(', ')}>Not in Growthfactor <small className="muted">({data.others.names.join(', ')})</small></span>}
                       split="–" />
                   )}
                 </tbody>

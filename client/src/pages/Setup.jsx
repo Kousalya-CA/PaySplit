@@ -35,7 +35,7 @@ export default function Setup({ onSuccess }) {
   };
 
   return (
-    <AuthLayout title="Set up PaySplit" subtitle="Create the admin account. After this, only admins can add people.">
+    <AuthLayout title="Set up Growthfactor" subtitle="Create the admin account. After this, only admins can add people.">
       <form onSubmit={submit} noValidate>
         {formError && <div className="form-error" role="alert">{formError}</div>}
         <Field label="Name" name="name" autoComplete="name"
