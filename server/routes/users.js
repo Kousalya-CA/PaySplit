@@ -4,17 +4,29 @@ import { HttpError } from '../http.js';
 import { createUser, createInvite, findUserByEmail, destroyUserSessions } from '../auth.js';
 import { EMAIL_RE } from './auth.js';
 
-const ROLES = ['admin', 'employee'];
+// A role choice from the browser: 'admin', 'employee' (the built-in Employee role) or 'role:<id>'.
+function parseRole(value) {
+  if (value === 'admin' || value === 'employee') return { role: value, roleId: null };
+  const m = /^role:(\d+)$/.exec(String(value ?? ''));
+  if (m && q.role.get(Number(m[1]))) {
+    const r = q.role.get(Number(m[1]));
+    return { role: 'employee', roleId: r.builtin ? null : r.id };
+  }
+  return null;
+}
+const roleKey = (u) => (u.role === 'admin' ? 'admin' : u.role_id ? `role:${u.role_id}` : 'employee');
 
 const q = {
   list: db.prepare(`
-    SELECT u.id, u.name, u.email, u.role, u.is_owner, u.created_at, u.last_login_at,
+    SELECT u.id, u.name, u.email, u.role, u.role_id, r.name AS role_name, u.is_owner, u.created_at, u.last_login_at,
       u.password_hash <> '' AS has_password,
       (u.invite_token_hash IS NOT NULL AND u.invite_expires_at > datetime('now')) AS invite_open,
       (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > datetime('now')) AS active_sessions
-    FROM users u ORDER BY u.is_owner DESC, u.name COLLATE NOCASE`),
-  byId: db.prepare('SELECT id, name, email, role, is_owner FROM users WHERE id = ?'),
-  update: db.prepare('UPDATE users SET name = ?, role = ? WHERE id = ?'),
+    FROM users u LEFT JOIN roles r ON r.id = u.role_id ORDER BY u.is_owner DESC, u.name COLLATE NOCASE`),
+  byId: db.prepare('SELECT id, name, email, role, role_id, is_owner FROM users WHERE id = ?'),
+  update: db.prepare('UPDATE users SET name = ?, role = ?, role_id = ? WHERE id = ?'),
+  setRoleId: db.prepare('UPDATE users SET role_id = ? WHERE id = ?'),
+  role: db.prepare('SELECT * FROM roles WHERE id = ?'),
   remove: db.prepare('DELETE FROM users WHERE id = ?'),
 };
 
@@ -23,6 +35,8 @@ const toRow = (u) => ({
   name: u.name,
   email: u.email,
   role: u.role,
+  roleKey: roleKey(u),
+  roleName: u.role === 'admin' ? 'Admin' : u.role_name || 'Employee',
   isOwner: Boolean(u.is_owner),
   createdAt: u.created_at,
   lastLoginAt: u.last_login_at,
@@ -43,30 +57,32 @@ export function registerUserRoutes(router) {
   router.post('/api/users', ({ body, setStatus }) => {
     const name = String(body.name ?? '').trim();
     const email = String(body.email ?? '').trim().toLowerCase();
-    const role = body.role;
+    const choice = parseRole(body.role);
     const errors = {};
     if (!name) errors.name = 'Enter their name.';
     if (!EMAIL_RE.test(email)) errors.email = 'Enter a valid email address.';
     else if (findUserByEmail(email)) errors.email = 'Someone with this email already has access.';
-    if (!ROLES.includes(role)) errors.role = 'Choose Admin or Employee.';
+    if (!choice) errors.role = 'Choose a role.';
     if (Object.keys(errors).length) throw new HttpError(400, 'Check the highlighted fields.', errors);
 
-    const id = createUser({ name, email, role });
+    const id = createUser({ name, email, role: choice.role });
+    if (choice.roleId) q.setRoleId.run(choice.roleId, id);
     setStatus(201);
-    return { user: { id, name, email, role }, invite: createInvite(id) };
+    return { user: { id, name, email, role: choice.role }, invite: createInvite(id) };
   }, { admin: true });
 
   router.patch('/api/users/:id', ({ params, body, user: me }) => {
     const target = requireUser(params.id);
     const name = body.name === undefined ? target.name : String(body.name).trim();
     if (!name) throw new HttpError(400, 'Enter their name.');
-    const role = body.role === undefined ? target.role : body.role;
-    if (!ROLES.includes(role)) throw new HttpError(400, 'Choose Admin or Employee.');
-    if (role !== target.role) {
+    const choice = body.role === undefined ? { role: target.role, roleId: target.role_id } : parseRole(body.role);
+    if (!choice) throw new HttpError(400, 'Choose a role.');
+    const role = choice.role;
+    if (role !== target.role || (choice.roleId || null) !== (target.role_id || null)) {
       if (target.is_owner) throw new HttpError(403, `${target.name} is the owner and always stays an admin.`);
       if (target.id === me.id) throw new HttpError(403, "You can't change your own role. Ask another admin.");
     }
-    q.update.run(name, role, target.id);
+    q.update.run(name, role, role === 'admin' ? null : choice.roleId, target.id);
     return { id: target.id, name, role };
   }, { admin: true });
 

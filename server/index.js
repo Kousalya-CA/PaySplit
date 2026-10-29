@@ -11,6 +11,8 @@ import { registerUserRoutes } from './routes/users.js';
 import { registerAzdoRoutes } from './routes/azdo.js';
 import { registerDeploymentRoutes } from './routes/deployments.js';
 import { registerPayoutRoutes } from './routes/payouts.js';
+import { registerRoleRoutes } from './routes/roles.js';
+import { tabForApi, tabsFor, tabLabel } from './access.js';
 
 const PORT = process.env.PORT || 3000;
 const distDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'dist');
@@ -22,6 +24,7 @@ registerUserRoutes(router);
 registerAzdoRoutes(router);
 registerDeploymentRoutes(router);
 registerPayoutRoutes(router);
+registerRoleRoutes(router);
 
 async function handleApi(req, res, pathname) {
   const found = router.match(req.method, pathname);
@@ -30,6 +33,11 @@ async function handleApi(req, res, pathname) {
   const user = userFromToken(getCookie(req, 'sid'));
   if (found.route.auth && !user) throw new HttpError(401, 'Please log in again.');
   if (found.route.admin && user?.role !== 'admin') throw new HttpError(403, 'Only admins can do this.');
+  // A tab the user's role doesn't have: its data is refused too, not just hidden.
+  if (user && user.role !== 'admin') {
+    const tab = tabForApi(pathname);
+    if (tab && !tabsFor(user).includes(tab)) throw new HttpError(403, `Your role doesn't include the ${tabLabel(tab)} tab. Ask an admin.`);
+  }
 
   let status = 200;
   const headers = {};

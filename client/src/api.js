@@ -27,6 +27,12 @@ export const api = {
   setPassword: (token, password) => request('/auth/set-password', { method: 'POST', body: { token, password } }),
   logout: () => request('/auth/logout', { method: 'POST' }),
 
+  roles: {
+    list: () => request('/roles'),
+    create: (body) => request('/roles', { method: 'POST', body }),
+    update: (id, body) => request(`/roles/${id}`, { method: 'PUT', body }),
+    remove: (id) => request(`/roles/${id}`, { method: 'DELETE' }),
+  },
   users: {
     list: () => request('/users'),
     create: (body) => request('/users', { method: 'POST', body }),

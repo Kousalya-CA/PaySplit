@@ -8,25 +8,27 @@ import UsersPage, { roleLabel } from '../pages/UsersPage.jsx';
 import EmployeeDetail from '../pages/EmployeeDetail.jsx';
 import SowTracker from '../pages/SowTracker.jsx';
 import Logo from './Logo.jsx';
+import RolesPage from '../pages/RolesPage.jsx';
 import { useEffect } from 'react';
 import Timesheet from '../pages/Timesheet.jsx';
 import AzureDevOpsPage from '../pages/AzureDevOpsPage.jsx';
 import DeploymentsPage, { CustomerDeployments } from '../pages/Deployments.jsx';
 import PayoutsPage from '../pages/PayoutsPage.jsx';
 
-// Employee logins see only Summary, Employees and All payments, each with just their own data,
-// plus Deployments (customer names only), which anyone can add to.
+// The tabs. Which ones a person sees comes from their role (user.tabs, set on Roles & access);
+// admins and the owner see them all. Employee-type roles see only their own pay data.
 const NAV = [
   ['summary', 'Summary'],
-  ['customers', 'Customers', { admin: true }],
+  ['customers', 'Customers'],
   ['employees', 'Employees'],
   ['payments', 'All payments'],
-  ['payouts', 'Payouts', { admin: true }],
+  ['payouts', 'Payouts'],
   ['deployments', 'Deployments'],
-  ['sow', 'SOW Tracker'],
+  ['sow', 'Sprint Tracker'],
   ['timesheet', 'Timesheet'],
-  ['users', 'Users', { admin: true }],
-  ['azure-devops', 'Azure DevOps', { admin: true }],
+  ['users', 'Users'],
+  ['roles', 'Roles & access'],
+  ['azure-devops', 'Azure DevOps'],
 ];
 
 // The BlackTops widget is for signed-in people only, so it's loaded here and never on the login page.
@@ -44,9 +46,13 @@ function useBlackTopsWidget() {
 }
 
 export default function Shell({ user, onLogout }) {
-  const [section = 'summary', id, sub] = useHashRoute();
+  const [asked = 'summary', id, sub] = useHashRoute();
   useBlackTopsWidget();
   const isAdmin = user.role === 'admin';
+  // Only the tabs this person's role has; anything else opens their first tab.
+  const allowed = new Set(user.tabs || []);
+  const nav = NAV.filter(([key]) => allowed.has(key));
+  const section = allowed.has(asked) ? asked : nav[0]?.[0] || '';
 
   let page;
   if (section === 'customers' && id && sub === 'deployments' && isAdmin) page = <CustomerDeployments key={id} customerId={Number(id)} user={user} />;
@@ -61,14 +67,16 @@ export default function Shell({ user, onLogout }) {
   else if (section === 'payments') page = <PaymentsPage isAdmin={isAdmin} />;
   else if (section === 'users' && isAdmin) page = <UsersPage me={user} />;
   else if (section === 'payouts' && isAdmin) page = <PayoutsPage key={id || 'list'} quarter={id || null} user={user} />;
-  else page = <SummaryPage isAdmin={isAdmin} />;
+  else if (section === 'roles' && isAdmin) page = <RolesPage />;
+  else if (section === 'summary') page = <SummaryPage isAdmin={isAdmin} />;
+  else page = <div className="empty"><p>Your role doesn't include any tabs yet. Ask an admin to give it access on Roles &amp; access.</p></div>;
 
   return (
     <div className="app">
       <header className="topbar">
-        <Logo href="#/summary" />
+        <Logo href={`#/${nav[0]?.[0] || ''}`} />
         <nav aria-label="Main">
-          {NAV.filter(([, , opts]) => !opts?.admin || isAdmin).map(([key, label]) => (
+          {nav.map(([key, label]) => (
             <a key={key} href={`#/${key}`} aria-current={section === key ? 'page' : undefined}>{label}</a>
           ))}
         </nav>

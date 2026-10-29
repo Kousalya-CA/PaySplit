@@ -334,7 +334,7 @@ export default function SowTracker({ isAdmin, user }) {
     <section>
       <div className="page-head">
         <div>
-          <h1>SOW Tracker</h1>
+          <h1>Sprint Tracker</h1>
           <p className="muted">Pick a sprint to see its User Stories and Issues grouped by Bucket, with their Tasks and Bugs. Read from Azure DevOps.</p>
         </div>
         {data.fetchedAt && (

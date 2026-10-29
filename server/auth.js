@@ -25,7 +25,7 @@ const q = {
   insertUser: db.prepare('INSERT INTO users (name, email, password_hash, role, is_owner) VALUES (?, ?, ?, ?, ?)'),
   insertSession: db.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, datetime('now', ?))"),
   sessionUser: db.prepare(`
-    SELECT u.id, u.name, u.email, u.role, u.is_owner FROM sessions s
+    SELECT u.id, u.name, u.email, u.role, u.role_id, u.is_owner FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND s.expires_at > datetime('now')`),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),

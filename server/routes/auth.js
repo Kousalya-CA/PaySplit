@@ -5,6 +5,7 @@ import {
   findUserByInvite, setPasswordFromInvite,
 } from '../auth.js';
 import { HttpError, getCookie } from '../http.js';
+import { roleName, tabsFor } from '../access.js';
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isProd = process.env.NODE_ENV === 'production';
@@ -16,8 +17,11 @@ export const sessionCookie = (token, maxAge) =>
 const failures = new Map();
 const WINDOW = 15 * 60 * 1000;
 
-export const publicUser = ({ id, name, email, role, is_owner }) =>
-  ({ id, name, email, role, isOwner: Boolean(is_owner) });
+// The signed-in user for the browser, with their role's name and the tabs they can open.
+export const publicUser = (u) => ({
+  id: u.id, name: u.name, email: u.email, role: u.role, isOwner: Boolean(u.is_owner),
+  roleName: roleName(u), tabs: tabsFor(u),
+});
 
 const checkPassword = (password) => {
   if (password.length < 8) throw new HttpError(400, 'Check the highlighted fields.', { password: 'Use at least 8 characters.' });

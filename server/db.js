@@ -634,6 +634,23 @@ addUserColumn('is_owner', 'INTEGER NOT NULL DEFAULT 0');
 addUserColumn('invite_token_hash', 'TEXT');
 addUserColumn('invite_expires_at', 'TEXT');
 addUserColumn('last_login_at', 'TEXT');
+// Roles & access (see access.js): the built-in Employee role and custom roles, each with the tabs it
+// can open. users.role_id picks a custom role for a non-admin user (NULL = Employee).
+addUserColumn('role_id', 'INTEGER');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS roles (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    tabs       TEXT NOT NULL,                     -- JSON array of tab keys
+    builtin    INTEGER NOT NULL DEFAULT 0,        -- 1 = the Employee role (can't be deleted)
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+if (!db.prepare('SELECT 1 FROM roles WHERE builtin = 1').get()) {
+  // Employees keep the tabs they had before roles existed.
+  db.prepare('INSERT INTO roles (name, tabs, builtin) VALUES (?, ?, 1)')
+    .run('Employee', JSON.stringify(['summary', 'employees', 'payments', 'deployments', 'sow', 'timesheet']));
+}
 
 // Employees added before types existed get the new type column. Default to 'Product' for existing employees.
 const employeeColumns = new Set(db.prepare('PRAGMA table_info(employees)').all().map((c) => c.name));

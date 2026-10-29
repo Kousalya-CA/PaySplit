@@ -616,3 +616,15 @@ label.check { display: inline-flex; align-items: center; gap: .35rem; font-weigh
   .hero-mobile { display: block; width: 100%; max-width: 22rem; height: auto; margin: -1rem auto 1.25rem; border-radius: 1rem; animation: hero-in .8s cubic-bezier(.2, .8, .2, 1) both; }
 }
 @media (max-width: 860px) and (prefers-reduced-motion: reduce) { .hero-mobile { animation: none; } }
+
+/* Roles & access: tabs down the side, one column per role. */
+.roles-table th, .roles-table td { padding: .5rem .75rem; }
+.roles-table .role-col { min-width: 9rem; text-align: center; vertical-align: top; }
+.roles-table .role-col strong, .roles-table .role-col small { display: block; }
+.roles-table .role-actions { display: flex; gap: .6rem; justify-content: center; margin-top: .2rem; }
+.roles-table .role-cell { text-align: center; }
+.roles-table .role-cell input { width: 1.1rem; height: 1.1rem; accent-color: var(--pink); cursor: pointer; }
+.roles-table tr.admin-tab th, .roles-table tr.admin-tab td { background: var(--paper); }
+.role-rename { display: flex; gap: .4rem; align-items: center; justify-content: center; }
+.role-rename input { width: 8rem; padding: .25rem .4rem; }
+.roles-add { margin-top: 1rem; max-width: 34rem; align-items: end; }

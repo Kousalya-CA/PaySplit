@@ -14,13 +14,14 @@ const when = (s) => (s
   : 'Never');
 
 // The owner is shown as its own role; only Admin and Employee can be given to people.
-export const roleLabel = (u) => (u.isOwner ? 'Owner' : u.role === 'admin' ? 'Admin' : 'Employee');
+export const roleLabel = (u) => (u.isOwner ? 'Owner' : u.role === 'admin' ? 'Admin' : u.roleName || 'Employee');
 
 const setupUrl =(token) => `${window.location.origin}${window.location.pathname}#/set-password/${token}`;
 
 // Admins only: add people with a role, send setup links, change roles, remove access.
 export default function UsersPage({ me }) {
   const [users, setUsers] = useState(null);
+  const [roles, setRoles] = useState([]); // Employee and custom roles (Roles & access)
   const [form, setForm] = useState({ name: '', email: '', role: 'employee' });
   const [fieldErrors, setFieldErrors] = useState({});
   const [error, setError] = useState('');
@@ -28,7 +29,13 @@ export default function UsersPage({ me }) {
   const [link, setLink] = useState(null); // { name, url, days }
 
   const load = () => api.users.list().then(setUsers).catch((e) => setError(e.message));
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.roles.list().then((d) => setRoles(d.roles)).catch(() => {}); }, []);
+  // Role choices: Admin, then Employee and the custom roles.
+  const roleOptions = [
+    ...roles.map((r) => <option key={r.id} value={r.builtin ? 'employee' : `role:${r.id}`}>{r.name}</option>),
+    <option key="admin" value="admin">Admin</option>,
+  ];
+  if (!roles.length) roleOptions.unshift(<option key="employee" value="employee">Employee</option>);
 
   const change = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
@@ -105,8 +112,7 @@ export default function UsersPage({ me }) {
           <label>
             <span>Role</span>
             <select name="role" value={form.role} onChange={change}>
-              <option value="employee">Employee</option>
-              <option value="admin">Admin</option>
+              {roleOptions}
             </select>
           </label>
         </div>
@@ -145,10 +151,9 @@ export default function UsersPage({ me }) {
                     <td>{u.email}</td>
                     <td>
                       {locked ? roleLabel(u) : (
-                        <select aria-label={`Role for ${u.name}`} className="compact" value={u.role}
+                        <select aria-label={`Role for ${u.name}`} className="compact" value={u.roleKey || u.role}
                           onChange={(e) => changeRole(u, e.target.value)}>
-                          <option value="employee">Employee</option>
-                          <option value="admin">Admin</option>
+                          {roleOptions}
                         </select>
                       )}
                     </td>
