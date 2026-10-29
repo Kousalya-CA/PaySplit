@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { moneyList } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
+import Avatar, { WithAvatar } from '../components/Avatar.jsx';
 import { EmpTags, thisMonth } from '../components/EmpStatus.jsx';
 
 // Admins manage everyone. An Employee login sees only their own row (the server filters it).
@@ -146,7 +147,7 @@ export default function EmployeesPage({ isAdmin }) {
                         <button className="primary small" type="submit">Save</button>
                         <button className="secondary small" type="button" onClick={() => setEditing(null)}>Cancel</button>
                       </form>
-                    ) : <a href={`#/employees/${emp.id}`}>{emp.name}</a>}
+                    ) : <WithAvatar id={emp.id} name={emp.name}><a href={`#/employees/${emp.id}`}>{emp.name}</a></WithAvatar>}
                   </th>
                   <td>
                     {editing?.id === emp.id ? (

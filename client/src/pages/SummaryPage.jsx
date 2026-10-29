@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { moneyIn, currencySymbol, monthLabel, quarterLabel, payoutStatusLabel, dayLabel, ratingLabel } from '../format.js';
 import { Loading, ErrorNote, Money as MoneyIn } from '../components/common.jsx';
 import { EmpName, columnRange, flagClass, useEmployeeMap } from '../components/EmpStatus.jsx';
+import Avatar, { WithAvatar } from '../components/Avatar.jsx';
 
 // Same as the "Monthly Summary" sheet: pay per employee per month, then yearly totals.
 // Allocated is the pay worked out from the splits; Paid is what's been marked as paid; Pending is the rest.
@@ -183,9 +184,9 @@ function EmployeeRows({ emps, employees, columns, by, linkCustomers, cell, rowTo
                     onClick={() => toggle(e.id)}
                     title={expanded ? 'Hide customer split' : 'Show customer split'}
                   >
-                    <span className="drill-caret" aria-hidden="true">▸</span><EmpName emp={emps.get(e.id)} name={e.name} from={first} to={last} />
+                    <span className="drill-caret" aria-hidden="true">▸</span><Avatar id={e.id} name={e.name} /><EmpName emp={emps.get(e.id)} name={e.name} from={first} to={last} />
                   </button>
-                ) : <EmpName emp={emps.get(e.id)} name={e.name} from={first} to={last} />}
+                ) : <span className="with-pic"><Avatar id={e.id} name={e.name} /><EmpName emp={emps.get(e.id)} name={e.name} from={first} to={last} /></span>}
                 {!e.active && <span className="tag">Inactive</span>}
               </th>
               {columns.map((c) => <td key={c} className={flagClass(emps.get(e.id), ...columnRange(c))}><Money value={cell(e, by, c)} /></td>)}

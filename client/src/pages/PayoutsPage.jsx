@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { moneyIn, monthLabel, dayLabel, quarterLabel, payoutStatusLabel, ratingLabel, pct } from '../format.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { EmpName, EmpTags, useEmployeeMap } from '../components/EmpStatus.jsx';
+import Avatar, { WithAvatar } from '../components/Avatar.jsx';
 
 // Quarterly payouts (admins). Pay for a month belongs to its calendar quarter and is paid in the pay
 // month (N months after the quarter ends). For a quarter: write a comment for each employee and
@@ -331,7 +332,7 @@ function QuarterPayout({ quarter, user }) {
                       <tr>
                         <th scope="row">
                           <button type="button" className="drill" aria-expanded={open.has(key)} onClick={() => toggle(key)}>
-                            <span className="drill-caret" aria-hidden="true">▸</span><EmpName emp={emps.get(g.employee_id)} name={g.employee} from={data.from} to={data.to} />
+                            <span className="drill-caret" aria-hidden="true">▸</span><Avatar id={g.employee_id} name={g.employee} /><EmpName emp={emps.get(g.employee_id)} name={g.employee} from={data.from} to={data.to} />
                           </button>
                           {ratingSummary(g.items)}
                           {g.sent_back_reason && <div className="warn-text small">Submission undone by {g.sent_back_by}: {g.sent_back_reason}</div>}
@@ -428,7 +429,7 @@ function QuarterPayout({ quarter, user }) {
                       <tr>
                         <th scope="row">
                           <button type="button" className="drill" aria-expanded={open.has(key)} onClick={() => toggle(key)}>
-                            <span className="drill-caret" aria-hidden="true">▸</span><EmpName emp={emps.get(l.employee_id)} name={l.employee} from={data.from} to={data.to} />
+                            <span className="drill-caret" aria-hidden="true">▸</span><Avatar id={l.employee_id} name={l.employee} /><EmpName emp={emps.get(l.employee_id)} name={l.employee} from={data.from} to={data.to} />
                           </button>
                           {ratingSummary(l.items)}
                         </th>

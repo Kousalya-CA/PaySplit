@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
+import Avatar, { WithAvatar } from '../components/Avatar.jsx';
 import { Loading, ErrorNote } from '../components/common.jsx';
 
 const STATUS = {
@@ -145,7 +146,7 @@ export default function UsersPage({ me }) {
                 return (
                   <tr key={u.id}>
                     <th scope="row">
-                      {u.name}
+                      <WithAvatar email={u.email} name={u.name} />
                       {isMe && <span className="tag">You</span>}
                     </th>
                     <td>{u.email}</td>

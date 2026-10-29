@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { dayLabel, monthLabel } from '../format.js';
+import Avatar, { WithAvatar } from '../components/Avatar.jsx';
 
 const hours = (n) => (n ? `${+n.toFixed(2)}` : '–');
 const percent = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
@@ -618,7 +619,7 @@ export default function SowTracker({ isAdmin, user }) {
                                 {showEffort && <td>{i.effortSize || <span className="muted">–</span>}</td>}
                                 <td className="small" title={i.areaPath}>{i.area}</td>
                                 {clients.length > 0 && <td>{i.client}</td>}
-                                <td>{i.assignedTo || <span className="muted">Unassigned</span>}</td>
+                                <td>{i.assignedTo ? <WithAvatar email={i.assignedEmail} name={i.assignedTo} size={20} /> : <span className="muted">Unassigned</span>}</td>
                                 <td className="num">{hours(i.hours.original)}</td>
                                 <td className="num">{hours(i.hours.completed)}</td>
                                 <td className="num">{hours(i.hours.remaining)}</td>
@@ -643,7 +644,7 @@ export default function SowTracker({ isAdmin, user }) {
                                   {showImpact && <td />}{showEffort && <td />}
                                   <td className="small" title={c.areaPath}>{c.area}</td>
                                   {clients.length > 0 && <td>{c.client}</td>}
-                                  <td>{c.assignedTo || <span className="muted">Unassigned</span>}</td>
+                                  <td>{c.assignedTo ? <WithAvatar email={c.assignedEmail} name={c.assignedTo} size={20} /> : <span className="muted">Unassigned</span>}</td>
                                   <td className="num">{hours(c.original)}</td>
                                   <td className="num">{hours(c.completed)}</td>
                                   <td className="num">{hours(c.remaining)}</td>

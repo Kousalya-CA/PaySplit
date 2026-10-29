@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { dayLabel } from '../format.js';
+import Avatar, { WithAvatar } from '../components/Avatar.jsx';
 
 // Timesheet: the hours logged with "Log time" on the Sprint Tracker, by the day they were worked.
 // One person (an employee sees only their own): summary tiles, a card per day with its status, and
@@ -176,7 +177,7 @@ export default function Timesheet({ isAdmin, user }) {
             <tbody>
               {rows.map(({ email: e, logs, t }) => (
                 <tr key={e}>
-                  <th scope="row"><button className="link ts-name" onClick={() => setEmail(e)}>{name(e)}</button></th>
+                  <th scope="row"><WithAvatar email={e} name={name(e)}><button className="link ts-name" onClick={() => setEmail(e)}>{name(e)}</button></WithAvatar></th>
                   <td>
                     <div className="ts-mini" aria-hidden="true">
                       {days.map((d) => {
@@ -217,7 +218,7 @@ export default function Timesheet({ isAdmin, user }) {
     <section>
       <div className="page-head"><div>
         <h1>Timesheet</h1>
-        <p className="muted">{isAdmin ? <><strong>{name(person)}</strong> · </> : null}Hours logged on Sprint Tracker tasks, day by day, compared with the hours expected.</p>
+        <p className="muted">{isAdmin ? <><span className="with-pic"><Avatar email={person} name={name(person)} /><strong>{name(person)}</strong></span> · </> : null}Hours logged on Sprint Tracker tasks, day by day, compared with the hours expected.</p>
       </div></div>
       {controls}
       <ErrorNote>{error}</ErrorNote>

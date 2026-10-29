@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { dayLabel } from '../format.js';
+import { refreshPhotos } from '../components/Avatar.jsx';
 
 // My profile (everyone): the account (name, email, role and tabs, last login, signed-in devices,
 // password) and the employee details matched by email. People change their own name, phone and photo;
@@ -59,12 +60,12 @@ export default function ProfilePage({ onUserChange }) {
     try {
       const photo = await squarePhoto(file);
       const d = await run('photo', () => api.profile.update({ photo }), 'Photo saved.');
-      if (d) onUserChange?.({ photo: d.employee?.photo || null });
+      if (d) { onUserChange?.({ photo: d.employee?.photo || null }); refreshPhotos(); }
     } catch (err) { setError(err.message); }
   };
   const removePhoto = async () => {
     const d = await run('photo', () => api.profile.update({ photo: null }), 'Photo removed.');
-    if (d) onUserChange?.({ photo: null });
+    if (d) { onUserChange?.({ photo: null }); refreshPhotos(); }
   };
   const changePassword = async (e) => {
     e.preventDefault();

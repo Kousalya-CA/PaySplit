@@ -1,6 +1,7 @@
 // My profile (everyone signed in): their account (name, email, role and tabs, last login, devices,
 // password) and their employee details, matched by email. People edit their own name, phone and
 // photo; admins set designation, date of joining, reporting manager and location.
+import { createHash } from 'node:crypto';
 import { db } from '../db.js';
 import { HttpError, getCookie } from '../http.js';
 import { verifyPassword, changePassword, destroyOtherSessions, countSessions, findUserById } from '../auth.js';
@@ -16,6 +17,8 @@ const q = {
   rename: db.prepare('UPDATE users SET name = ? WHERE id = ?'),
   setPhone: db.prepare('UPDATE employees SET phone = ? WHERE id = ?'),
   setPhoto: db.prepare('UPDATE employees SET photo = ? WHERE id = ?'),
+  photos: db.prepare('SELECT id, LOWER(email) AS email, photo FROM employees WHERE photo IS NOT NULL'),
+  photo: db.prepare('SELECT photo FROM employees WHERE id = ?'),
   setDetails: db.prepare('UPDATE employees SET designation = ?, joined_on = ?, manager_id = ?, location = ? WHERE id = ?'),
 };
 
@@ -93,6 +96,17 @@ export function registerProfileRoutes(router) {
   router.post('/api/me/sign-out-others', ({ user, req }) => {
     destroyOtherSessions(user.id, getCookie(req, 'sid'));
     return profileOf(user, getCookie(req, 'sid'));
+  });
+
+  // Profile photos for the avatars next to names (anyone signed in). The list says who has one and
+  // a version (changes when the photo does), so the images can be cached by the browser.
+  router.get('/api/photos', () => q.photos.all().map((p) => ({ id: p.id, email: p.email, v: createHash('sha1').update(p.photo).digest('hex').slice(0, 10) })));
+  router.get('/api/photos/:id', ({ params, setHeader }) => {
+    const photo = q.photo.get(params.id)?.photo;
+    const m = photo && /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(photo);
+    if (!m) throw new HttpError(404, 'No photo.');
+    setHeader('Cache-Control', 'private, max-age=604800');
+    return { raw: Buffer.from(m[2], 'base64'), type: m[1] };
   });
 
   // Admins: an employee's designation, date of joining, reporting manager and location.

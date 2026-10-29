@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Loading, ErrorNote } from '../components/common.jsx';
 import { dayLabel, monthLabel } from '../format.js';
+import Avatar, { WithAvatar } from '../components/Avatar.jsx';
 import { EmpTags, thisMonth as currentMonth } from '../components/EmpStatus.jsx';
 
 const hours = (n) => (n ? `${+n.toFixed(2)}` : '–');
@@ -57,7 +58,7 @@ export default function EmployeeDetail({ id, isAdmin }) {
       <a className="back" href="#/employees">Employees</a>
       <div className="page-head">
         <div>
-          <h1>{emp.name}</h1>
+          <h1 className="with-pic"><Avatar id={emp.id} name={emp.name} size={40} /><span>{emp.name}</span></h1>
           <p className="muted">{emp.employee_code ? `${emp.employee_code} · ` : ''}{emp.email || 'No email yet'} · {emp.type}{emp.active ? '' : ' · Inactive'}</p>
         </div>
         {month && !loading && <button className="secondary" onClick={() => loadMonth(month)}>Reload</button>}

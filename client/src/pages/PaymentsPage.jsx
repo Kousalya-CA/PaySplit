@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { monthLabel, pct, dayLabel, moneyList, CURRENCIES, quarterLabel, payoutStatusLabel } from '../format.js';
 import { Loading, ErrorNote, Money } from '../components/common.jsx';
 import { EmpName, useEmployeeMap } from '../components/EmpStatus.jsx';
+import Avatar, { WithAvatar } from '../components/Avatar.jsx';
 
 // Same as the "All Payments" sheet: one row per employee per category per period (one row per month
 // when a payment is split over months). The first column is the month the pay is for.
@@ -136,7 +137,7 @@ export default function PaymentsPage({ isAdmin }) {
                     </td>
                     <td>{isAdmin ? <a href={`#/customers/${r.customer_id}`}>{r.customer}</a> : r.customer}</td>
                     <td>{r.category}</td>
-                    <th scope="row"><EmpName emp={emps.get(r.employee_id)} name={r.employee} from={r.month} /></th>
+                    <th scope="row"><span className="with-pic"><Avatar id={r.employee_id} name={r.employee} size={20} /><EmpName emp={emps.get(r.employee_id)} name={r.employee} from={r.month} /></span></th>
                     <td className="num">{pct(r.category_pct)}</td>
                     <td className="num">{pct(r.weightage)}</td>
                     <td className="strong"><Money value={r.pay} currency={r.currency} /></td>

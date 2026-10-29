@@ -20,6 +20,7 @@ async function request(path, { method = 'GET', body } = {}) {
 
 export const api = {
   me: () => request('/auth/me'),
+  photos: () => request('/photos'),
   profile: {
     get: () => request('/me/profile'),
     update: (body) => request('/me/profile', { method: 'PATCH', body }),

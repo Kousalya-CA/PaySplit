@@ -747,3 +747,10 @@ a.avatar.on, a.avatar:hover { box-shadow: 0 0 0 2px var(--saffron); }
 .profile-pw p { margin: 0; }
 .profile-photo-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .profile-card form.row { align-items: end; }
+
+/* Avatars next to names: photo or initials. */
+.pic { display: inline-block; flex: none; border-radius: 50%; object-fit: cover; vertical-align: middle; }
+.pic-initials { display: inline-grid; place-items: center; color: #fff; font-weight: 800; line-height: 1; letter-spacing: .02em; }
+.with-pic { display: inline-flex; align-items: center; gap: .45rem; min-width: 0; }
+.drill .pic { margin-right: .1rem; }
+img.pic { box-shadow: 0 0 0 1px var(--line); background: var(--surface); }

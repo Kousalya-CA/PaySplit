@@ -49,6 +49,12 @@ async function handleApi(req, res, pathname) {
     setStatus: (s) => { status = s; },
     setHeader: (k, v) => { headers[k] = v; },
   });
+  // An image (or other file) instead of JSON.
+  if (result?.raw) {
+    res.writeHead(status, { 'Content-Type': result.type, 'Content-Length': result.raw.length, ...headers });
+    res.end(result.raw);
+    return;
+  }
   if (result === undefined) sendJson(res, 204, undefined, headers);
   else sendJson(res, status, result, headers);
 }
