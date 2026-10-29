@@ -128,6 +128,25 @@ function LogTime({ task, logs, allLogs, holidays, leaves, hpd, isAdmin, userId, 
   );
 }
 
+// Work item type as a small icon in Azure DevOps' colours (the type name shows on hover).
+const TYPE_ICONS = {
+  'User Story': { color: '#009CCC', path: 'M5 3.5h4.5a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 0-1.5-1.5H5zM11 5a1.5 1.5 0 0 1 1.5-1.5H17v8h-4.5A1.5 1.5 0 0 0 11 13z' },
+  Issue: { color: '#B4009E', path: 'M10 4v6.5M10 13.4v.1' },
+  Task: { color: '#F2CB1D', path: 'M6 10.2l2.6 2.6L14.2 7' },
+  Bug: { color: '#CC293D', path: 'M7.5 8.5h5v4a2.5 2.5 0 0 1-5 0zM8.3 8.5a1.7 1.7 0 0 1 3.4 0M5 10h2.5M12.5 10H15M5.5 13.5l2-1M14.5 13.5l-2-1' },
+};
+function TypeIcon({ type }) {
+  const t = TYPE_ICONS[type] || { color: '#7a8a90', path: 'M6 10h8' };
+  return (
+    <span className="wi-type" title={type} role="img" aria-label={type}>
+      <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+        <rect x="1" y="1" width="18" height="18" rx="4" fill={t.color} />
+        <path d={t.path} fill="none" stroke={type === 'Task' ? '#3d3000' : '#fff'} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
+  );
+}
+
 const days = (n) => `${+n.toFixed(1)} day${n === 1 ? '' : 's'}`;
 
 // A sprint's days: from the earliest start to the latest finish of the sprints shown (the calendar month
@@ -564,7 +583,7 @@ export default function SowTracker({ isAdmin, user }) {
                     <table className="grid list wi-table">
                       <thead>
                         <tr>
-                          <th scope="col" className="wi-title">Title</th><th scope="col">Type</th><th scope="col">State</th>
+                          <th scope="col" className="wi-title">Title</th><th scope="col">State</th>
                           {showImpact && <th scope="col">Business impact</th>}{showEffort && <th scope="col">Effort size</th>}
                           <th scope="col">Team</th>{clients.length > 0 && <th scope="col">Client</th>}<th scope="col">Assigned to</th>
                           <th scope="col" className="num">Original</th><th scope="col" className="num">Completed</th><th scope="col" className="num">Remaining</th>
@@ -583,10 +602,9 @@ export default function SowTracker({ isAdmin, user }) {
                                       <span className="drill-caret" aria-hidden="true">▸</span>
                                     </button>
                                   ) : <span className="sow-nokids" aria-hidden="true" />}
-                                  {' '}<a href={i.url} target="_blank" rel="noreferrer">{i.id}</a> {i.title}
+                                  {' '}<TypeIcon type={i.type} /><a href={i.url} target="_blank" rel="noreferrer">{i.id}</a> {i.title}
                                   {i.children.length > 0 && <small className="muted"> ({i.children.length}{i.hiddenKids ? ` of ${i.children.length + i.hiddenKids}` : ''})</small>}
                                 </th>
-                                <td>{i.type}</td>
                                 <td className={i.closed ? 'ok-text' : ''}>{i.state}</td>
                                 {showImpact && <td>{i.businessImpact || <span className="muted">–</span>}</td>}
                                 {showEffort && <td>{i.effortSize || <span className="muted">–</span>}</td>}
@@ -601,7 +619,7 @@ export default function SowTracker({ isAdmin, user }) {
                                 <Fragment key={c.id}>
                                 <tr className={`wi-child${c.overrun ? ' row-overrun' : c.noEstimate && !c.closed ? ' row-no-eta' : ''}`}>
                                   <th scope="row" className="wi-title" title={`${c.id} ${c.title}`}>
-                                    <a href={c.url} target="_blank" rel="noreferrer">{c.id}</a> {c.title}
+                                    <TypeIcon type={c.type} /><a href={c.url} target="_blank" rel="noreferrer">{c.id}</a> {c.title}
                                     {c.noEstimate && !c.closed && <span className="sow-flag no-eta">No estimate</span>}
                                     {c.overrun && <span className="sow-flag overrun">0 h left · not closed</span>}
                                     {canLog(c) && (
@@ -613,7 +631,6 @@ export default function SowTracker({ isAdmin, user }) {
                                       <small className="muted"> · {hours(logs.filter((l) => l.task_id === c.id).reduce((n, l) => n + l.hours, 0))} h logged here</small>
                                     )}
                                   </th>
-                                  <td>{c.type}</td>
                                   <td className={c.closed ? 'ok-text' : ''}>{c.state}</td>
                                   {showImpact && <td />}{showEffort && <td />}
                                   <td className="small" title={c.areaPath}>{c.area}</td>
@@ -625,7 +642,7 @@ export default function SowTracker({ isAdmin, user }) {
                                 </tr>
                                 {logging === c.id && (
                                   <tr className="sow-log-row">
-                                    <td colSpan={8 + (showImpact ? 1 : 0) + (showEffort ? 1 : 0) + (clients.length > 0 ? 1 : 0)}>
+                                    <td colSpan={7 + (showImpact ? 1 : 0) + (showEffort ? 1 : 0) + (clients.length > 0 ? 1 : 0)}>
                                       <LogTime task={c} logs={logs.filter((l) => l.task_id === c.id)} allLogs={logs} holidays={holidays} leaves={leaves} hpd={hpd}
                                         isAdmin={isAdmin} userId={user?.id}
                                         onDone={(msg) => { setLogging(null); setNotice(msg); load(month); }} onError={setError} />
