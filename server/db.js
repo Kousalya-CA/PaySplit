@@ -665,6 +665,14 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_email ON employees(emai
 // Company employee ID (for example CA1023). Empty for employees added before it existed; unique.
 addEmployeeColumn('employee_code', 'TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_code ON employees(employee_code COLLATE NOCASE) WHERE employee_code IS NOT NULL');
+// Profile details: phone and photo (a small JPEG data URL) are set by the employee on My profile;
+// designation, date of joining, reporting manager and location are set by admins.
+addEmployeeColumn('phone', 'TEXT');
+addEmployeeColumn('photo', 'TEXT');
+addEmployeeColumn('designation', 'TEXT');
+addEmployeeColumn('joined_on', 'TEXT');
+addEmployeeColumn('manager_id', 'INTEGER');
+addEmployeeColumn('location', 'TEXT');
 // Relieved: the date the employee was relieved (YYYY-MM-DD) and a note. Pay isn't affected; their
 // name is highlighted from that month on. Admins only.
 addEmployeeColumn('relieved_on', 'TEXT');

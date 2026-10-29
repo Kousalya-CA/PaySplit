@@ -9,6 +9,7 @@ import EmployeeDetail from '../pages/EmployeeDetail.jsx';
 import SowTracker from '../pages/SowTracker.jsx';
 import Logo from './Logo.jsx';
 import RolesPage from '../pages/RolesPage.jsx';
+import ProfilePage from '../pages/ProfilePage.jsx';
 import { useEffect } from 'react';
 import Timesheet from '../pages/Timesheet.jsx';
 import AzureDevOpsPage from '../pages/AzureDevOpsPage.jsx';
@@ -45,14 +46,15 @@ function useBlackTopsWidget() {
   }, []);
 }
 
-export default function Shell({ user, onLogout }) {
+export default function Shell({ user, onLogout, onUserChange }) {
   const [asked = 'summary', id, sub] = useHashRoute();
   useBlackTopsWidget();
   const isAdmin = user.role === 'admin';
   // Only the tabs this person's role has; anything else opens their first tab.
   const allowed = new Set(user.tabs || []);
   const nav = NAV.filter(([key]) => allowed.has(key));
-  const section = allowed.has(asked) ? asked : nav[0]?.[0] || '';
+  // My profile is open to everyone; other pages need the tab.
+  const section = asked === 'profile' || allowed.has(asked) ? asked : nav[0]?.[0] || '';
 
   let page;
   if (section === 'customers' && id && sub === 'deployments' && isAdmin) page = <CustomerDeployments key={id} customerId={Number(id)} user={user} />;
@@ -68,6 +70,7 @@ export default function Shell({ user, onLogout }) {
   else if (section === 'users' && isAdmin) page = <UsersPage me={user} />;
   else if (section === 'payouts' && isAdmin) page = <PayoutsPage key={id || 'list'} quarter={id || null} user={user} />;
   else if (section === 'roles' && isAdmin) page = <RolesPage />;
+  else if (section === 'profile') page = <ProfilePage onUserChange={onUserChange} />;
   else if (section === 'summary') page = <SummaryPage isAdmin={isAdmin} />;
   else page = <div className="empty"><p>Your role doesn't include any tabs yet. Ask an admin to give it access on Roles &amp; access.</p></div>;
 
@@ -81,7 +84,10 @@ export default function Shell({ user, onLogout }) {
           ))}
         </nav>
         <div className="topbar-user">
-          <span className="avatar" title={`${user.name} (${user.email}), ${roleLabel(user)}`}>{user.name[0].toUpperCase()}</span>
+          <a className={`avatar${section === 'profile' ? ' on' : ''}`} href="#/profile" title={`My profile: ${user.name} (${user.email}), ${roleLabel(user)}`}
+            aria-current={section === 'profile' ? 'page' : undefined}>
+            {user.photo ? <img src={user.photo} alt="My profile" /> : <><span aria-hidden="true">{user.name[0].toUpperCase()}</span><span className="sr-only">My profile</span></>}
+          </a>
           <button className="ghost" onClick={onLogout}>Log out</button>
         </div>
       </header>

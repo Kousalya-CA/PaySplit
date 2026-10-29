@@ -30,6 +30,10 @@ const q = {
     WHERE s.token_hash = ? AND s.expires_at > datetime('now')`),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
   deleteUserSessions: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
+  deleteOtherSessions: db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?'),
+  countSessions: db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND expires_at > datetime('now')"),
+  updatePassword: db.prepare('UPDATE users SET password_hash = ? WHERE id = ?'),
+  userById: db.prepare('SELECT * FROM users WHERE id = ?'),
   purgeExpired: db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')"),
   touchLogin: db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?"),
   setInvite: db.prepare("UPDATE users SET invite_token_hash = ?, invite_expires_at = datetime('now', ?) WHERE id = ?"),
@@ -58,6 +62,15 @@ export function createSession(userId) {
 export const userFromToken = (token) => (token ? q.sessionUser.get(sha256(token)) : undefined);
 export const destroySession = (token) => { if (token) q.deleteSession.run(sha256(token)); };
 export const destroyUserSessions = (userId) => q.deleteUserSessions.run(userId);
+// Sign out everywhere except this browser (token = this browser's session cookie).
+export const destroyOtherSessions = (userId, token) => q.deleteOtherSessions.run(userId, sha256(String(token || '')));
+export const countSessions = (userId) => q.countSessions.get(userId).n;
+export const findUserById = (id) => q.userById.get(id);
+// A new password from My profile; other devices are signed out, this one stays signed in.
+export function changePassword(userId, password, token) {
+  q.updatePassword.run(hashPassword(password), userId);
+  destroyOtherSessions(userId, token);
+}
 
 // One-time link an admin sends so a user can choose their password. Only the hash is stored.
 export function createInvite(userId) {

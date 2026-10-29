@@ -12,6 +12,7 @@ import { registerAzdoRoutes } from './routes/azdo.js';
 import { registerDeploymentRoutes } from './routes/deployments.js';
 import { registerPayoutRoutes } from './routes/payouts.js';
 import { registerRoleRoutes } from './routes/roles.js';
+import { registerProfileRoutes } from './routes/profile.js';
 import { tabForApi, tabsFor, tabLabel } from './access.js';
 
 const PORT = process.env.PORT || 3000;
@@ -25,6 +26,7 @@ registerAzdoRoutes(router);
 registerDeploymentRoutes(router);
 registerPayoutRoutes(router);
 registerRoleRoutes(router);
+registerProfileRoutes(router);
 
 async function handleApi(req, res, pathname) {
   const found = router.match(req.method, pathname);

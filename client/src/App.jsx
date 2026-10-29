@@ -55,7 +55,7 @@ export default function App() {
       />
     );
   }
-  if (user) return <Shell user={user} onLogout={logout} />;
+  if (user) return <Shell user={user} onLogout={logout} onUserChange={(patch) => setUser((u) => ({ ...u, ...patch }))} />;
   if (needsSetup) return <Setup onSuccess={signedIn} />;
   return <Login onSuccess={signedIn} />;
 }

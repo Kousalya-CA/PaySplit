@@ -42,7 +42,7 @@ const q = {
     FROM employees e ORDER BY e.active DESC, e.id`),
   payByEmployeeCurrency: db.prepare('SELECT employee_id, currency, SUM(pay) AS amount FROM payments GROUP BY employee_id, currency ORDER BY currency'),
   employee: db.prepare('SELECT id, employee_code, name, email, active, type FROM employees WHERE id = ?'),
-  relievedAll: db.prepare('SELECT id, relieved_on, relieved_note FROM employees'),
+  relievedAll: db.prepare('SELECT id, relieved_on, relieved_note, phone, designation, joined_on, manager_id, location FROM employees'),
   setRelieved: db.prepare('UPDATE employees SET relieved_on = ?, relieved_note = ? WHERE id = ?'),
   pipsAll: db.prepare('SELECT * FROM employee_pips ORDER BY employee_id, from_month'),
   pipsFor: db.prepare('SELECT * FROM employee_pips WHERE employee_id = ? ORDER BY from_month'),
@@ -525,6 +525,12 @@ export function registerDataRoutes(router) {
       ...e,
       relieved_on: relieved.get(e.id)?.relieved_on || null,
       relieved_note: relieved.get(e.id)?.relieved_note || null,
+      // Profile details (photo is left out to keep the list small).
+      phone: relieved.get(e.id)?.phone || null,
+      designation: relieved.get(e.id)?.designation || null,
+      joined_on: relieved.get(e.id)?.joined_on || null,
+      manager_id: relieved.get(e.id)?.manager_id || null,
+      location: relieved.get(e.id)?.location || null,
       pips: pips.filter((p) => p.employee_id === e.id),
     }));
   });

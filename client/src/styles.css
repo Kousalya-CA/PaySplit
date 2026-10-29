@@ -723,3 +723,27 @@ a.primary, a.secondary { text-decoration: none; }
 .ts-pos { color: var(--green); }
 .ts-status { display: flex; gap: .35rem; flex-wrap: wrap; }
 .ts-daycard .ts-chip { white-space: normal; overflow: visible; line-height: 1.25; padding: .1rem .5rem; }
+
+/* My profile. The avatar in the top bar opens it (and shows the photo). */
+a.avatar { text-decoration: none; overflow: hidden; }
+a.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+a.avatar.on, a.avatar:hover { box-shadow: 0 0 0 2px var(--saffron); }
+.profile-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+.profile-photo { width: 4.5rem; height: 4.5rem; border-radius: 50%; overflow: hidden; flex: none; display: grid; place-items: center;
+  background: linear-gradient(140deg, var(--bar), var(--indigo)); color: #fff; font-size: 1.8rem; font-weight: 800; }
+.profile-photo.small { width: 3.4rem; height: 3.4rem; font-size: 1.3rem; }
+.profile-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.profile-head p { margin: .2rem 0 0; }
+.profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap: 1rem; align-items: start; }
+.profile-card { background: var(--surface); border: 2px solid var(--line); border-radius: .9rem; padding: 1rem 1.2rem 1.2rem; display: grid; gap: .8rem; }
+.profile-card h2 { margin: 0; font-size: 1.15rem; }
+.profile-card h3 { margin: .4rem 0 0; font-size: 1rem; }
+.profile-dl { display: grid; grid-template-columns: max-content 1fr; gap: .45rem 1rem; margin: 0; }
+.profile-dl dt { color: var(--muted); font-weight: 700; }
+.profile-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.profile-inline { margin-left: .6rem; }
+.profile-pw { display: grid; gap: .6rem; max-width: 22rem; }
+.profile-pw label { display: grid; gap: .25rem; }
+.profile-pw p { margin: 0; }
+.profile-photo-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.profile-card form.row { align-items: end; }

@@ -20,6 +20,12 @@ async function request(path, { method = 'GET', body } = {}) {
 
 export const api = {
   me: () => request('/auth/me'),
+  profile: {
+    get: () => request('/me/profile'),
+    update: (body) => request('/me/profile', { method: 'PATCH', body }),
+    password: (current, password) => request('/me/password', { method: 'POST', body: { current, password } }),
+    signOutOthers: () => request('/me/sign-out-others', { method: 'POST' }),
+  },
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password } }),
   status: () => request('/auth/status'),
   setup: (name, email, password) => request('/auth/setup', { method: 'POST', body: { name, email, password } }),
@@ -48,6 +54,7 @@ export const api = {
     update: (id, body) => request(`/employees/${id}`, { method: 'PATCH', body }),
     remove: (id) => request(`/employees/${id}`, { method: 'DELETE' }),
     tasks: (id, month) => request(`/employees/${id}/tasks${month ? `?month=${month}` : ''}`),
+    setDetails: (id, body) => request(`/employees/${id}/details`, { method: 'PATCH', body }),
     setRelieved: (id, relievedOn, note) => request(`/employees/${id}/relieved`, { method: 'PUT', body: { relieved_on: relievedOn, note } }),
     addPip: (id, body) => request(`/employees/${id}/pips`, { method: 'POST', body }),
     updatePip: (pipId, body) => request(`/pips/${pipId}`, { method: 'PUT', body }),

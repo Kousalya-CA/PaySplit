@@ -103,9 +103,13 @@ function EmployeeStatus({ id }) {
   const blankPip = { id: null, from_month: '', to_month: '', comment: '' };
   const [pip, setPip] = useState(blankPip); // the PIP being added (id null) or edited
 
+  const [details, setDetails] = useState(null); // { designation, joined_on, manager_id, location }
+  const [staff, setStaff] = useState([]);
   const load = () => api.employees.list().then((list) => {
     const e = list.find((x) => x.id === id) || null;
     setEmp(e);
+    setStaff(list.filter((x) => x.id !== id && (x.active || x.id === e?.manager_id)));
+    if (e) setDetails({ designation: e.designation || '', joined_on: e.joined_on || '', manager_id: e.manager_id ? String(e.manager_id) : '', location: e.location || '' });
     if (e) setRelieved({ on: e.relieved_on || '', note: e.relieved_note || '' });
   }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id]);
@@ -115,6 +119,10 @@ function EmployeeStatus({ id }) {
     setError('');
     setNotice('');
     try { await fn(); setNotice(done); await load(); return true; } catch (err) { setError(err.message); return false; }
+  };
+  const saveDetails = (e) => {
+    e.preventDefault();
+    run(() => api.employees.setDetails(id, { ...details, manager_id: details.manager_id ? Number(details.manager_id) : null }), 'Details saved.');
   };
   const saveRelieved = (e) => {
     e.preventDefault();
@@ -137,6 +145,33 @@ function EmployeeStatus({ id }) {
 
   return (
     <section className="emp-status">
+      <h2>Profile details</h2>
+      <p className="muted small">Shown on {emp.name}'s My profile. They set their own phone and photo{emp.phone ? ` (phone: ${emp.phone})` : ''}.</p>
+      {details && (
+        <form className="row" onSubmit={saveDetails}>
+          <label className="grow">
+            <span>Designation</span>
+            <input value={details.designation} maxLength={80} placeholder="For example Senior Engineer" onChange={(e) => setDetails({ ...details, designation: e.target.value })} />
+          </label>
+          <label>
+            <span>Date of joining</span>
+            <input type="date" value={details.joined_on} onChange={(e) => setDetails({ ...details, joined_on: e.target.value })} />
+          </label>
+          <label>
+            <span>Reporting manager</span>
+            <select value={details.manager_id} onChange={(e) => setDetails({ ...details, manager_id: e.target.value })}>
+              <option value="">None</option>
+              {staff.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Location</span>
+            <input value={details.location} maxLength={80} placeholder="For example Chennai" onChange={(e) => setDetails({ ...details, location: e.target.value })} />
+          </label>
+          <button className="secondary" type="submit">Save details</button>
+        </form>
+      )}
+
       <h2>Relieved &amp; PIP <EmpTags emp={emp} from={currentMonth()} /></h2>
       <p className="muted small">Only admins see this. Pay isn't affected: {emp.name}'s name is highlighted on every page in the PIP months, and from the relieved month on.</p>
       <ErrorNote>{error}</ErrorNote>

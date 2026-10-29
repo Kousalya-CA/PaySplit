@@ -6,6 +6,7 @@ import {
 } from '../auth.js';
 import { HttpError, getCookie } from '../http.js';
 import { roleName, tabsFor } from '../access.js';
+import { db } from '../db.js';
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isProd = process.env.NODE_ENV === 'production';
@@ -18,9 +19,11 @@ const failures = new Map();
 const WINDOW = 15 * 60 * 1000;
 
 // The signed-in user for the browser, with their role's name and the tabs they can open.
+const photoOf = db.prepare('SELECT photo FROM employees WHERE email = ? COLLATE NOCASE');
 export const publicUser = (u) => ({
   id: u.id, name: u.name, email: u.email, role: u.role, isOwner: Boolean(u.is_owner),
   roleName: roleName(u), tabs: tabsFor(u),
+  photo: (u.email && photoOf.get(u.email)?.photo) || null, // for the avatar in the top bar
 });
 
 const checkPassword = (password) => {
