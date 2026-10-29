@@ -646,3 +646,11 @@ html { font-size: 13px; }
 .primary.small, .secondary.small { margin: 0; }
 a.primary, a.secondary { text-decoration: none; }
 .auth-card .primary { width: 100%; margin-top: .6rem; }
+
+/* Sprint Tracker: days and hours, one figure per line, side by side (stacked on phones). */
+.sow-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: .6rem 2rem; }
+.sow-dl { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; margin: 0; align-content: start; }
+.sow-dl dt { color: var(--muted); font-weight: 600; }
+.sow-dl dd { margin: 0; font-variant-numeric: tabular-nums; }
+.sow-dl .sow-dl-title { font-weight: 800; color: var(--ink); padding-bottom: .2rem; border-bottom: 1px solid var(--line); margin-bottom: .1rem; }
+.sow-fit { margin-left: .4rem; font-size: .8rem; font-weight: 800; padding: .02rem .5rem; border-radius: 1rem; background: var(--green-soft); color: var(--green); white-space: nowrap; }

@@ -439,31 +439,58 @@ export default function SowTracker({ isAdmin, user }) {
                 <strong>{shownSprints.length ? [...new Set(shownSprints.map((sp) => sp.name))].join(', ') : 'Sprint'}</strong>
                 <span className="muted"> · {dayLabel(cal.from)} to {dayLabel(cal.to)}</span>
               </div>
-              <div className="sow-cal-stats">
-                <span><strong>{cal.working}</strong> working days</span>
-                <span><strong>{cal.done}</strong> done</span>
-                <span><strong>{cal.left}</strong> left</span>
-                <span className="muted">{cal.weekends} weekend days{cal.holidays.length ? ` · ${cal.holidays.length} holiday${cal.holidays.length === 1 ? '' : 's'}` : ''}</span>
-                {!person && <span>Capacity <strong>{hours(perPerson)} h</strong> per person ({cal.working} × {hpd} h)</span>}
-              </div>
-              {people > 0 && (
-                <div className="sow-cal-stats sow-capacity">
-                  {person ? (
-                    <span>
-                      <strong>{peopleNames.get(person)}</strong>: {cal.working} working days − {days(cap.leave)} leave = <strong>{days(cap.available)}</strong> available
-                      {' '}· <strong>{days(cap.left)}</strong> left
-                    </span>
-                  ) : (
-                    <span>{people} {people === 1 ? 'person' : 'people'} · <strong>{days(cap.leave)}</strong> leave in this sprint</span>
+              {/* The sprint's days and hours, one figure per line: days on the left, hours on the right. */}
+              <div className="sow-figures">
+                <dl className="sow-dl">
+                  <dt className="sow-dl-title">{person ? peopleNames.get(person) : people ? `Team · ${people} ${people === 1 ? 'person' : 'people'}` : 'Sprint'}</dt>
+                  <dd className="sow-dl-title" />
+                  <dt>Working days</dt>
+                  <dd><strong>{cal.working}</strong> <small className="muted">({cal.weekends} weekend days{cal.holidays.length ? `, ${cal.holidays.length} holiday${cal.holidays.length === 1 ? '' : 's'}` : ''} off)</small></dd>
+                  <dt>Done so far</dt>
+                  <dd><strong>{days(cal.done)}</strong></dd>
+                  <dt>Left</dt>
+                  <dd><strong>{days(cal.left)}</strong></dd>
+                  {people > 0 && (
+                    <>
+                      <dt>Leave</dt>
+                      <dd><strong>{days(cap.leave)}</strong></dd>
+                      <dt>Available</dt>
+                      <dd><strong>{days(cap.available)}</strong> <small className="muted">{person ? '(working days − leave)' : '(everyone\'s working days − leave)'}</small></dd>
+                    </>
                   )}
-                  <span>Capacity <strong>{hours(teamCapacity)} h</strong> · estimated {hours(total.original)} h
-                    = <strong className={total.original > teamCapacity ? 'warn-text' : ''}>{percent(total.original, teamCapacity)}%</strong></span>
-                  <span>Remaining capacity <strong>{hours(leftCapacity)} h</strong> vs remaining work
-                    {' '}<strong className={total.remaining > leftCapacity ? 'warn-text' : 'ok-text'}>{hours(total.remaining)} h</strong>
-                    {total.remaining > leftCapacity && <span className="warn-text"> (over by {hours(total.remaining - leftCapacity)} h)</span>}
-                  </span>
-                </div>
-              )}
+                </dl>
+                <dl className="sow-dl">
+                  <dt className="sow-dl-title">Hours</dt>
+                  <dd className="sow-dl-title" />
+                  <dt>Hours per day</dt>
+                  <dd><strong>{hpd} h</strong></dd>
+                  {people > 0 ? (
+                    <>
+                      <dt>Capacity</dt>
+                      <dd><strong>{hours(teamCapacity) || 0} h</strong> <small className="muted">({days(cap.available)} × {hpd} h)</small></dd>
+                      <dt>Estimated work</dt>
+                      <dd>
+                        <strong>{hours(total.original) || 0} h</strong>{' '}
+                        <small className={total.original > teamCapacity ? 'warn-text' : 'muted'}>({percent(total.original, teamCapacity)}% of capacity)</small>
+                      </dd>
+                      <dt>Remaining capacity</dt>
+                      <dd><strong>{hours(leftCapacity) || 0} h</strong> <small className="muted">(days left × {hpd} h)</small></dd>
+                      <dt>Remaining work</dt>
+                      <dd>
+                        <strong>{hours(total.remaining) || 0} h</strong>{' '}
+                        {total.remaining > leftCapacity
+                          ? <span className="sow-flag overrun">Over by {hours(total.remaining - leftCapacity)} h</span>
+                          : <span className="sow-fit">Fits · {hours(leftCapacity - total.remaining) || 0} h spare</span>}
+                      </dd>
+                    </>
+                  ) : (
+                    <>
+                      <dt>Capacity per person</dt>
+                      <dd><strong>{hours(perPerson) || 0} h</strong> <small className="muted">({cal.working} × {hpd} h)</small></dd>
+                    </>
+                  )}
+                </dl>
+              </div>
               <div className="sow-cal-days" role="list" aria-label="Sprint days">
                 {cal.days.map((x) => (
                   <span key={x.day} role="listitem"
