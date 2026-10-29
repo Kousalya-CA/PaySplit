@@ -195,6 +195,7 @@ export default function SowTracker({ isAdmin, user }) {
   const [hoursInput, setHoursInput] = useState('');
   const [notice, setNotice] = useState('');
   const [person, setPerson] = useState(''); // assignee email
+  const [personPicked, setPersonPicked] = useState(false); // chosen by hand, so don't change it again
   const [staff, setStaff] = useState(null); // employees, for adding leave (admins)
   const [newLeave, setNewLeave] = useState({ employee_id: '', from_day: '', to_day: '', half: false, note: '' });
   const [logging, setLogging] = useState(null); // task id with the Log time form open
@@ -220,6 +221,13 @@ export default function SowTracker({ isAdmin, user }) {
       .finally(() => setLoading(false));
   };
   useEffect(() => { load(''); }, []);
+  // Until someone picks a person, show the signed-in person's own work when they have any in the sprint.
+  useEffect(() => {
+    if (personPicked || !data?.buckets) return;
+    const me = String(user?.email || '').toLowerCase();
+    const mine = me && data.buckets.some((b) => b.items.some((i) => i.assignedEmail === me || i.children.some((c) => c.assignedEmail === me)));
+    setPerson(mine ? me : '');
+  }, [data, personPicked]);
 
   if (!data) return error ? <ErrorNote>{error}</ErrorNote> : <Loading />;
 
@@ -435,7 +443,7 @@ export default function SowTracker({ isAdmin, user }) {
             {peopleList.length > 0 && (
               <label className="wi-filter">
                 <span>Person</span>
-                <select value={person} onChange={(e) => setPerson(e.target.value)}>
+                <select value={person} onChange={(e) => { setPerson(e.target.value); setPersonPicked(true); }}>
                   <option value="">Everyone</option>
                   {peopleList.map(([email, name]) => <option key={email} value={email}>{name}</option>)}
                 </select>
