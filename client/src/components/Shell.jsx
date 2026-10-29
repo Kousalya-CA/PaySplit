@@ -62,7 +62,7 @@ export default function Shell({ user, onLogout }) {
   else if (section === 'employees') page = <EmployeesPage isAdmin={isAdmin} />;
   else if (section === 'azure-devops' && isAdmin) page = <AzureDevOpsPage />;
   else if (section === 'deployments') page = <DeploymentsPage user={user} customerId={id ? Number(id) : null} />;
-  else if (section === 'timesheet') page = <Timesheet isAdmin={isAdmin} />;
+  else if (section === 'timesheet') page = <Timesheet isAdmin={isAdmin} user={user} />;
   else if (section === 'sow') page = <SowTracker isAdmin={isAdmin} user={user} />;
   else if (section === 'payments') page = <PaymentsPage isAdmin={isAdmin} />;
   else if (section === 'users' && isAdmin) page = <UsersPage me={user} />;

@@ -656,3 +656,70 @@ a.primary, a.secondary { text-decoration: none; }
 .sow-fit { margin-left: .4rem; font-size: .8rem; font-weight: 800; padding: .02rem .5rem; border-radius: 1rem; background: var(--green-soft); color: var(--green); white-space: nowrap; }
 .sow-cal-brief { color: var(--muted); }
 .wi-type { display: inline-flex; vertical-align: -3px; margin-right: .35rem; }
+
+/* Timesheet (redesigned): tiles, a card per day, and what was logged by day. */
+.ts-controls { align-items: center; }
+.ts-nav { display: flex; align-items: center; gap: .5rem; font-size: 1.05rem; }
+.ts-spacer { flex: 1; }
+.ts-seg { margin-top: 0; }
+.ts-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .8rem; margin: 1rem 0; }
+.ts-tile { background: var(--surface); border: 2px solid var(--line); border-radius: .8rem; padding: .8rem 1rem; display: grid; gap: .15rem; }
+.ts-tile small { color: var(--muted); font-weight: 700; font-size: .92rem; }
+.ts-tile strong { font-size: 1.7rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.ts-tile span { color: var(--muted); font-size: .9rem; }
+.ts-tile.short strong { color: var(--warn); }
+.ts-tile.over strong { color: var(--danger); }
+.ts-tile.ok strong { color: var(--green); }
+.ts-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .5rem; }
+@media (max-width: 760px) { .ts-days:not(.month) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ts-dow { font-weight: 800; color: var(--muted); font-size: .85rem; padding-left: .2rem; }
+.ts-daycard { background: var(--surface); border: 2px solid var(--line); border-radius: .8rem; padding: .55rem .65rem; display: grid; gap: .3rem; align-content: start; min-width: 0; }
+.ts-daycard.dayoff { background: var(--paper); }
+.ts-daycard.today { border-color: var(--ink); }
+.ts-daycard.over { border-color: var(--danger); }
+.ts-dayname { display: flex; justify-content: space-between; gap: .3rem; font-weight: 800; }
+.ts-dayname small { color: var(--muted); font-weight: 700; }
+.ts-dayhours { font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.ts-dayhours small { font-size: .85rem; color: var(--muted); font-weight: 700; }
+.ts-meter { height: .45rem; border-radius: 1rem; background: var(--lilac); overflow: hidden; }
+.ts-meter span { display: block; height: 100%; border-radius: 1rem; background: var(--green); }
+.ts-meter span.short, .ts-meter span.todo { background: #e0a100; }
+.ts-meter span.over { background: var(--danger); }
+.ts-days.month .ts-daycard { padding: .4rem .5rem; }
+.ts-days.month .ts-dayhours { font-size: 1.05rem; }
+@media (max-width: 760px) { .ts-days.month .ts-chip { display: none; } .ts-days.month .ts-dayname small { display: none; } }
+.ts-chip { justify-self: start; display: inline-block; font-size: .82rem; font-weight: 800; padding: .05rem .55rem; border-radius: 1rem; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ts-chip.ok { background: var(--green-soft); color: var(--green); }
+.ts-chip.short { background: #fbeed8; color: #8a5a00; }
+.ts-chip.over { background: var(--danger-soft); color: var(--danger); }
+.ts-chip.off, .ts-chip.todo { background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
+.ts-chip.todo { border-style: dashed; }
+.ts-chip.leave { background: #ece4f8; color: #5b2a9e; }
+.ts-chip.holiday { background: var(--danger-soft); color: var(--danger); }
+.ts-entries { margin-top: 1.4rem; background: var(--surface); border: 2px solid var(--line); border-radius: .8rem; overflow: hidden; }
+.ts-entries h2 { margin: 0; padding: .7rem 1rem; font-size: 1.1rem; border-bottom: 2px solid var(--line); display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.ts-entries h2 small { color: var(--muted); font-weight: 600; font-size: .9rem; }
+.ts-group + .ts-group { border-top: 1px solid var(--line); }
+.ts-grouphead { display: flex; justify-content: space-between; gap: .5rem 1rem; flex-wrap: wrap; align-items: center; padding: .5rem 1rem; background: var(--paper); font-weight: 800; }
+.ts-entry { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr) auto; gap: .2rem 1rem; padding: .55rem 1rem; align-items: start; }
+.ts-entry + .ts-entry { border-top: 1px dashed var(--line); }
+.ts-entry-h { font-size: 1.1rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.ts-entry-task { min-width: 0; }
+.ts-entry-task a { color: var(--ink); font-weight: 700; text-underline-offset: 3px; }
+.ts-entry-by { color: var(--muted); font-size: .9rem; white-space: nowrap; display: flex; gap: .8rem; }
+@media (max-width: 560px) { .ts-entry { grid-template-columns: 3.8rem minmax(0, 1fr); } .ts-entry-by { grid-column: 2; } }
+.ts-empty { margin: 0; padding: .55rem 1rem; }
+.ts-team .ts-name { font-weight: 800; color: var(--ink); }
+.ts-mini { display: flex; gap: 3px; align-items: flex-end; height: 1.6rem; }
+.ts-mini span { flex: none; width: .75rem; border-radius: 2px; background: var(--green); }
+.ts-mini span.short { background: #e0a100; }
+.ts-mini span.over { background: var(--danger); }
+.ts-mini span.none { background: #f3c9c4; height: 4px; }
+.ts-mini span.todo { background: var(--lilac); height: 4px; }
+.ts-mini span.off { background: transparent; border-bottom: 2px solid var(--line); height: 2px; }
+.ts-days.month ~ * .ts-mini span { width: .4rem; }
+.ts-team .ts-mini span { width: .6rem; }
+.ts-neg { color: #8a5a00; }
+.ts-pos { color: var(--green); }
+.ts-status { display: flex; gap: .35rem; flex-wrap: wrap; }
+.ts-daycard .ts-chip { white-space: normal; overflow: visible; line-height: 1.25; padding: .1rem .5rem; }
