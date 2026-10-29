@@ -1,7 +1,7 @@
 import Logo from '../components/Logo.jsx';
 
 // Two-column layout shared by the login and setup pages. The left panel shows a team climbing a
-// growth chart (gently animated), so people see what Growthfactor is about.
+// growth chart (gently animated), so people see what GrowthFactor is about.
 export default function AuthLayout({ title, subtitle, children }) {
   return (
     <div className="auth">
@@ -14,7 +14,6 @@ export default function AuthLayout({ title, subtitle, children }) {
             <span className="hero-shine" />
           </div>
           <span className="hero-chip chip-growth"><b>▲ 18%</b> growth this quarter</span>
-          <span className="hero-chip chip-pool"><b>Q4 pool</b> $996 · 4 people</span>
         </div>
 
         <p className="tagline">Share revenue growth with the team that earns it.</p>

@@ -1,4 +1,4 @@
-// The Growthfactor mark: three rising bars, the tallest in saffron, on peacock blue.
+// The GrowthFactor mark: three rising bars, the tallest in saffron, on peacock blue.
 export function LogoMark({ size = 26 }) {
   return (
     <svg className="logo-mark" width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
@@ -11,6 +11,6 @@ export function LogoMark({ size = 26 }) {
 }
 
 export default function Logo({ className = 'logo', href }) {
-  const inner = <><LogoMark />Growthfactor</>;
+  const inner = <><LogoMark />GrowthFactor</>;
   return href ? <a className={className} href={href}>{inner}</a> : <div className={className}>{inner}</div>;
 }

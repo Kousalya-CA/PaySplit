@@ -186,7 +186,7 @@ export default function EmployeesPage({ isAdmin }) {
       {isAdmin ? (
         <p className="muted small">
           Each employee's email should be the one they use on the Azure DevOps sprint board and to log in
-          to Growthfactor: an Employee login sees only the employee with the same email.
+          to GrowthFactor: an Employee login sees only the employee with the same email.
           Inactive employees keep their pay history but no longer appear when you add contributors.
           Employees who are already part of a split can't be deleted.
         </p>

@@ -83,7 +83,7 @@ export default function UsersPage({ me }) {
       <div className="page-head">
         <div>
           <h1>Users</h1>
-          <p className="muted">People who can log in to Growthfactor. Only admins see this page.</p>
+          <p className="muted">People who can log in to GrowthFactor. Only admins see this page.</p>
         </div>
       </div>
 

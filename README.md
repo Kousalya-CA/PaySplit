@@ -1,6 +1,6 @@
-# Growthfactor
+# GrowthFactor
 
-(The app is called Growthfactor; the code and repository still use the old name PaySplit.)
+(The app is called GrowthFactor; the code and repository still use the old name PaySplit.)
 
 PaySplit splits customer revenue among employees. It replaces the
 **Employee Contribution & Pay-Split** Excel workbook with a web app.

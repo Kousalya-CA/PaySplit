@@ -44,7 +44,7 @@ export default function Login({ onSuccess }) {
         </button>
       </form>
       <p className="switch">
-        No account? Ask your Growthfactor admin to add you. They'll send you a link to set your password.
+        No account? Ask your GrowthFactor admin to add you. They'll send you a link to set your password.
       </p>
     </AuthLayout>
   );

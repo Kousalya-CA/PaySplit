@@ -45,7 +45,7 @@ export default function App() {
     setUser(u);
   };
 
-  if (checking) return <div className="splash" aria-busy="true">Growthfactor</div>;
+  if (checking) return <div className="splash" aria-busy="true">GrowthFactor</div>;
   if (token) {
     return (
       <SetPassword

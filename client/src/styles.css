@@ -543,7 +543,7 @@ label.check { display: inline-flex; align-items: center; gap: .35rem; font-weigh
 .ts-key.holiday { background: var(--danger-soft); }
 .ts-key.leave { background: #efe7fb; }
 
-/* Growthfactor: the logo mark (an SVG) and a colourful login page. */
+/* GrowthFactor: the logo mark (an SVG) and a colourful login page. */
 .logo-mark { width: 1.6rem; height: 1.6rem; flex: none; background: none; box-shadow: none; }
 .logo-mobile .logo-mark { background: none; box-shadow: none; }
 .logo-mobile { color: var(--bar); }

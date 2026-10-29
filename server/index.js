@@ -73,4 +73,4 @@ createServer(async (req, res) => {
       sendJson(res, 500, { error: 'Something went wrong on the server.' });
     }
   }
-}).listen(PORT, () => console.log(`Growthfactor server running at http://localhost:${PORT}`));
+}).listen(PORT, () => console.log(`GrowthFactor server running at http://localhost:${PORT}`));

@@ -582,7 +582,7 @@ export function registerAzdoRoutes(router) {
     };
     const who = user.name || user.email;
     await writeHours(s, w, values,
-      `${hours} h logged by ${who} for ${day} via Growthfactor. Completed ${completedBefore} → ${completedAfter} h, remaining ${remainingBefore} → ${remainingAfter} h.${originalSet ? ` Original estimate set to ${originalSet} h.` : ''}${note ? ` Note: ${note}` : ''}`);
+      `${hours} h logged by ${who} for ${day} via GrowthFactor. Completed ${completedBefore} → ${completedAfter} h, remaining ${remainingBefore} → ${remainingAfter} h.${originalSet ? ` Original estimate set to ${originalSet} h.` : ''}${note ? ` Note: ${note}` : ''}`);
     const id = Number(q.insertLog.run(w.id, f[F.title], email, f[F.assignedTo]?.displayName || '', day, hours,
       completedBefore, completedAfter, remainingBefore, remainingAfter, originalSet, note, who, user.id).lastInsertRowid);
     setStatus(201);
@@ -625,7 +625,7 @@ export function registerAzdoRoutes(router) {
     const remaining = r2((num(f[F.remaining]) || 0) + log.hours);
     const who = user.name || user.email;
     await writeHours(s, w, { [F.completed]: completed, [F.remaining]: remaining },
-      `${log.hours} h logged by ${log.logged_by} for ${log.day} was undone by ${who} via Growthfactor. Completed → ${completed} h, remaining → ${remaining} h.`);
+      `${log.hours} h logged by ${log.logged_by} for ${log.day} was undone by ${who} via GrowthFactor. Completed → ${completed} h, remaining → ${remaining} h.`);
     q.undoLog.run(who, log.id);
     return { ok: true, completed, remaining };
   });
