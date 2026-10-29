@@ -44,7 +44,7 @@ async function handleApi(req, res, pathname) {
 }
 
 // Production: serve the built React app from client/dist.
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.avif': 'image/avif', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.ico': 'image/x-icon' };
 
 async function serveStatic(res, pathname) {
   let file = normalize(join(distDir, pathname));

@@ -576,3 +576,43 @@ label.check { display: inline-flex; align-items: center; gap: .35rem; font-weigh
   border-top: 6px solid var(--saffron);
   border-image: linear-gradient(90deg, var(--bar), var(--indigo), var(--pink), var(--saffron)) 1;
 }
+
+/* Login: the growth illustration in a floating card, with two floating chips. */
+.hero { position: relative; width: 100%; max-width: 30rem; align-self: center; padding: 1.5rem 0; }
+.hero-card {
+  position: relative; overflow: hidden; border-radius: 1.25rem; background: #fff;
+  box-shadow: 0 28px 60px rgba(15, 10, 60, .4), 0 0 0 6px rgba(255, 255, 255, .18);
+  animation: hero-in .9s cubic-bezier(.2, .8, .2, 1) both, hero-float 7s ease-in-out 1s infinite;
+}
+.hero-card img { display: block; width: 100%; height: auto; transform-origin: 40% 60%; animation: hero-zoom 14s ease-in-out infinite alternate; }
+.hero-shine {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .55) 50%, transparent 65%);
+  transform: translateX(-120%); animation: hero-shine 6s ease-in-out 2s infinite;
+}
+.hero-chip {
+  position: absolute; display: inline-flex; gap: .35rem; align-items: center; white-space: nowrap;
+  padding: .45rem .8rem; border-radius: 999px; font-size: .85rem; font-weight: 600;
+  background: #fff; color: var(--ink); box-shadow: 0 12px 28px rgba(15, 10, 60, .3);
+}
+.hero-chip b { font-weight: 800; }
+.chip-growth { top: .2rem; right: -1rem; animation: hero-in .9s .35s both, hero-bob 5s ease-in-out 1.3s infinite; }
+.chip-growth b { color: var(--green); }
+.chip-pool { bottom: .2rem; left: -1rem; animation: hero-in .9s .55s both, hero-bob 6s ease-in-out 1.6s infinite reverse; }
+.chip-pool b { color: var(--pink); }
+@keyframes hero-in { from { opacity: 0; transform: translateY(24px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes hero-float { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-10px) rotate(.5deg); } }
+@keyframes hero-zoom { from { transform: scale(1); } to { transform: scale(1.06); } }
+@keyframes hero-shine { 0% { transform: translateX(-120%); } 40%, 100% { transform: translateX(120%); } }
+@keyframes hero-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@media (prefers-reduced-motion: reduce) {
+  .hero-card, .hero-card img, .hero-shine, .hero-chip { animation: none; }
+  .hero-shine { display: none; }
+}
+/* Phones: one column that never grows wider than the screen, with the illustration above the form. */
+.hero-mobile { display: none; }
+@media (max-width: 860px) {
+  .auth { grid-template-columns: minmax(0, 1fr); }
+  .hero-mobile { display: block; width: 100%; max-width: 22rem; height: auto; margin: -1rem auto 1.25rem; border-radius: 1rem; animation: hero-in .8s cubic-bezier(.2, .8, .2, 1) both; }
+}
+@media (max-width: 860px) and (prefers-reduced-motion: reduce) { .hero-mobile { animation: none; } }
