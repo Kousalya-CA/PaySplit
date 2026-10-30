@@ -767,3 +767,11 @@ a.avatar .pic { box-shadow: 0 0 0 2px rgba(255, 255, 255, .7); }
 .profile-photo-btn:hover .profile-photo-cam, .profile-photo-btn:focus-visible .profile-photo-cam { background: var(--saffron); }
 .profile-photo-actions { margin-top: .5rem; gap: .8rem; align-items: center; }
 .secondary.small { border-color: var(--line); }
+
+/* Sprint Tracker: capacity by person. */
+.sow-people { display: grid; gap: .5rem; padding-top: .4rem; border-top: 1px solid var(--line); }
+.sow-people-table th, .sow-people-table td { white-space: nowrap; }
+.sow-people-table tr.cap-over th, .sow-people-table tr.cap-over td { background: #fff4dc; }
+.sow-people-table tr.cap-me th, .sow-people-table tr.cap-me td { box-shadow: inset 0 0 0 9999px rgba(11, 79, 108, .06); }
+.sow-people-table .cap-name { text-decoration: none; color: var(--ink); }
+.sow-people-table tfoot th, .sow-people-table tfoot td { font-weight: 800; background: var(--paper); }

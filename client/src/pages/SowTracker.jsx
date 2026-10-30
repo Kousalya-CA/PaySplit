@@ -201,6 +201,7 @@ export default function SowTracker({ isAdmin, user }) {
   const [newLeave, setNewLeave] = useState({ employee_id: '', from_day: '', to_day: '', half: false, note: '' });
   const [logging, setLogging] = useState(null); // task id with the Log time form open
   // The days and hours summary can be collapsed; the choice is remembered in this browser.
+  const [showPeople, setShowPeople] = useState(true); // Capacity by person table
   const [showDays, setShowDays] = useState(() => { try { return localStorage.getItem('gf-sprint-days') !== 'hidden'; } catch { return true; } });
   const toggleDays = () => setShowDays((v) => {
     try { localStorage.setItem('gf-sprint-days', v ? 'hidden' : 'shown'); } catch { /* not saved */ }
@@ -324,6 +325,23 @@ export default function SowTracker({ isAdmin, user }) {
   }
   const teamCapacity = cap.available * hpd;
   const leftCapacity = cap.left * hpd;
+  // Capacity by person: everyone with Tasks or Bugs in what's shown (team, client, status and search
+  // apply; the Person filter doesn't), their capacity less leave, and their own task hours.
+  const teamItems = (data.buckets || []).flatMap((b) => b.items.map(refine).filter(Boolean).filter(matches));
+  const capRows = !cal ? [] : [...peopleNames].map(([email, name]) => {
+    const kids = teamItems.flatMap((i) => i.children.filter((c) => c.assignedEmail === email));
+    const sumK = (k) => kids.reduce((n, c) => n + (c[k] || 0), 0);
+    const lv = leaveIn(cal, leaves, email);
+    const capacity = (cal.working - lv.used) * hpd;
+    const leftCap = (cal.left - lv.left) * hpd;
+    return { email, name, tasks: kids.length, leave: lv.used, capacity, estimated: sumK('original'), completed: sumK('completed'), remaining: sumK('remaining'), leftCap };
+  }).filter((r) => r.tasks > 0).sort((a, b) => a.name.localeCompare(b.name));
+  const capTotal = capRows.reduce((t, r) => {
+    for (const k of ['tasks', 'leave', 'capacity', 'estimated', 'completed', 'remaining', 'leftCap']) t[k] += r[k];
+    return t;
+  }, { tasks: 0, leave: 0, capacity: 0, estimated: 0, completed: 0, remaining: 0, leftCap: 0 });
+  const hrs = (n) => `${+(n || 0).toFixed(2)} h`; // 0 h rather than a dash in the table
+  const fitText = (r) => (r.remaining > r.leftCap + 0.001 ? `Over by ${hours(r.remaining - r.leftCap)} h` : `Fits · ${hours(r.leftCap - r.remaining) || 0} h spare`);
   const sprintLeaves = cal ? leaves.filter((l) => l.from_day <= cal.to && l.to_day >= cal.from && (!person || l.email === person)) : [];
   // Holidays: add, remove, and hours per day (admins).
   const holidayCall = async (fn, done) => {
@@ -423,7 +441,15 @@ export default function SowTracker({ isAdmin, user }) {
         for (const c of i.children) lines.push([b.name || 'No bucket', 'Task/Bug', c.id, c.type, c.title, c.state, '', '', c.area, c.client, c.assignedTo, c.original, c.completed, c.remaining, c.url]);
       }
     }
-    const csv = [...summaryRows(), [], header, ...lines].map((l) => l.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    const r1 = (n) => +(n || 0).toFixed(2);
+    const people = capRows.length ? [
+      ['Capacity by person'],
+      ['Person', 'Tasks', 'Leave (days)', 'Capacity (h)', 'Estimated (h)', '% of capacity', 'Completed (h)', 'Remaining work (h)', 'Remaining capacity (h)', 'Status'],
+      ...capRows.map((r) => [r.name, r.tasks, r1(r.leave), r1(r.capacity), r1(r.estimated), `${percent(r.estimated, r.capacity)}%`, r1(r.completed), r1(r.remaining), r1(r.leftCap), fitText(r)]),
+      ['Total', capTotal.tasks, r1(capTotal.leave), r1(capTotal.capacity), r1(capTotal.estimated), `${percent(capTotal.estimated, capTotal.capacity)}%`, r1(capTotal.completed), r1(capTotal.remaining), r1(capTotal.leftCap), ''],
+      [],
+    ] : [];
+    const csv = [...summaryRows(), [], ...people, header, ...lines].map((l) => l.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); // BOM: Excel reads the dashes and symbols correctly
     const who = person ? `-${(peopleNames.get(person) || 'person').replace(/\s+/g, '-')}` : '';
     const a = Object.assign(document.createElement('a'), { href: url, download: `sprint-${month}${who}.csv` });
@@ -602,6 +628,64 @@ export default function SowTracker({ isAdmin, user }) {
               )}
               {sprintLeaves.length > 0 && (
                 <p className="small sow-cal-leaves">Leave: {sprintLeaves.map((l) => `${person ? '' : `${l.name} `}${leaveLabel(l)}`).join(' · ')}</p>
+              )}
+              {capRows.length > 0 && (
+                <div className="sow-people">
+                  <button type="button" className="drill" aria-expanded={showPeople} onClick={() => setShowPeople((v) => !v)}>
+                    <span className="drill-caret" aria-hidden="true">▸</span>Capacity by person ({capRows.length})
+                  </button>
+                  {showPeople && (
+                    <div className="table-wrap">
+                      <table className="grid list sow-people-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">Person</th><th scope="col" className="num">Tasks</th><th scope="col" className="num">Leave</th>
+                            <th scope="col" className="num">Capacity</th><th scope="col" className="num">Estimated</th><th scope="col" className="num">% of capacity</th>
+                            <th scope="col" className="num">Completed</th><th scope="col" className="num">Remaining work</th>
+                            <th scope="col" className="num">Remaining capacity</th><th scope="col">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {capRows.map((r) => {
+                            const over = r.remaining > r.leftCap + 0.001;
+                            return (
+                              <tr key={r.email} className={`${over ? 'cap-over' : ''}${person === r.email ? ' cap-me' : ''}`}>
+                                <th scope="row">
+                                  <button className="link cap-name" onClick={() => { setPerson(r.email); setPersonPicked(true); }} title="Show only their work">
+                                    <WithAvatar email={r.email} name={r.name} size={20} />
+                                  </button>
+                                </th>
+                                <td className="num">{r.tasks}</td>
+                                <td className="num">{r.leave ? days(r.leave) : '–'}</td>
+                                <td className="num">{hrs(r.capacity)}</td>
+                                <td className="num">{hrs(r.estimated)}</td>
+                                <td className={`num${r.estimated > r.capacity ? ' warn-text' : ''}`}>{percent(r.estimated, r.capacity)}%</td>
+                                <td className="num">{hrs(r.completed)}</td>
+                                <td className="num strong">{hrs(r.remaining)}</td>
+                                <td className="num">{hrs(r.leftCap)}</td>
+                                <td>{over ? <span className="sow-flag overrun">{fitText(r)}</span> : <span className="sow-fit">{fitText(r)}</span>}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <th scope="row">Total</th>
+                            <td className="num">{capTotal.tasks}</td>
+                            <td className="num">{capTotal.leave ? days(capTotal.leave) : '–'}</td>
+                            <td className="num">{hrs(capTotal.capacity)}</td>
+                            <td className="num">{hrs(capTotal.estimated)}</td>
+                            <td className="num">{percent(capTotal.estimated, capTotal.capacity)}%</td>
+                            <td className="num">{hrs(capTotal.completed)}</td>
+                            <td className="num">{hrs(capTotal.remaining)}</td>
+                            <td className="num">{hrs(capTotal.leftCap)}</td>
+                            <td>{capRows.filter((r) => r.remaining > r.leftCap + 0.001).length} over</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </div>
               )}
               </>)}
             </div>
