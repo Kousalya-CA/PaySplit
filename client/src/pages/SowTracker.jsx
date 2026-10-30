@@ -367,6 +367,53 @@ export default function SowTracker({ isAdmin, user }) {
   const years = [...new Set(data.months.map((m) => (m.month === 'undated' ? 'undated' : m.month.slice(0, 4))))];
   const year = month === 'undated' ? 'undated' : month.slice(0, 4);
 
+  // The CSV starts with the sprint's summary for what's shown (its dates, the filters, days and hours),
+  // then a blank line, then the User Stories / Issues and their Tasks and Bugs.
+  const summaryRows = () => {
+    const r1 = (n) => +(n || 0).toFixed(2);
+    const statusName = status === '__open' ? 'Open (not closed)' : status;
+    const filters = [
+      team && `Team: ${team}`, client && `Client: ${client}`, person && `Person: ${peopleNames.get(person) || person}`,
+      statusName && `Status: ${statusName}`, search.trim() && `Search: ${search.trim()}`,
+    ].filter(Boolean).join('; ') || 'None';
+    const rows = [
+      ['Sprint', shownSprints.length ? [...new Set(shownSprints.map((sp) => sp.name))].join(', ') : month],
+      ['From', cal ? cal.from : ''],
+      ['To', cal ? cal.to : ''],
+      ['Filters', filters],
+      ['For', person ? peopleNames.get(person) || person : people ? `Team (${people} ${people === 1 ? 'person' : 'people'})` : 'Everyone'],
+    ];
+    if (cal) {
+      rows.push(
+        ['Working days', cal.working],
+        ['Weekend days', cal.weekends],
+        ['Holidays', cal.holidays.map((h) => `${h.day} ${h.holiday}`).join('; ') || 'None'],
+        ['Days done', cal.done],
+        ['Days left', cal.left],
+      );
+      if (people > 0) rows.push(['Leave (days)', r1(cap.leave)], ['Available (days)', r1(cap.available)]);
+      rows.push(['Hours per day', hpd]);
+      if (people > 0) {
+        rows.push(
+          ['Capacity (h)', r1(teamCapacity)],
+          ['Estimated work (h)', r1(total.original)],
+          ['Estimated % of capacity', `${percent(total.original, teamCapacity)}%`],
+          ['Remaining capacity (h)', r1(leftCapacity)],
+          ['Remaining work (h)', r1(total.remaining)],
+          ['Fits?', total.remaining > leftCapacity ? `Over by ${r1(total.remaining - leftCapacity)} h` : `Fits, ${r1(leftCapacity - total.remaining)} h spare`],
+        );
+      } else rows.push(['Capacity per person (h)', r1(perPerson)]);
+    }
+    rows.push(
+      ['Buckets', buckets.length],
+      ['User Stories and Issues', `${total.items} (${total.closed} closed)`],
+      ['Tasks and Bugs', `${total.tasks} (${total.tasksClosed} closed)`],
+      ['Completed (h)', r1(total.completed)],
+      ['Downloaded', new Date().toLocaleString()],
+    );
+    return rows;
+  };
+
   const exportCsv = () => {
     const header = ['Bucket', 'Level', 'ID', 'Type', 'Title', 'State', 'Business impact', 'Effort size', 'Team', 'Client', 'Assigned to', 'Original', 'Completed', 'Remaining', 'Link'];
     const lines = [];
@@ -376,9 +423,10 @@ export default function SowTracker({ isAdmin, user }) {
         for (const c of i.children) lines.push([b.name || 'No bucket', 'Task/Bug', c.id, c.type, c.title, c.state, '', '', c.area, c.client, c.assignedTo, c.original, c.completed, c.remaining, c.url]);
       }
     }
-    const csv = [header, ...lines].map((l) => l.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const a = Object.assign(document.createElement('a'), { href: url, download: `sow-${month}.csv` });
+    const csv = [...summaryRows(), [], header, ...lines].map((l) => l.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); // BOM: Excel reads the dashes and symbols correctly
+    const who = person ? `-${(peopleNames.get(person) || 'person').replace(/\s+/g, '-')}` : '';
+    const a = Object.assign(document.createElement('a'), { href: url, download: `sprint-${month}${who}.csv` });
     a.click();
     URL.revokeObjectURL(url);
   };
