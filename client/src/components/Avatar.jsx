@@ -11,9 +11,10 @@ const listeners = new Set();
 function loadPhotos() {
   if (!pending) {
     pending = api.photos().then((list) => {
+      const url = (p) => (p.userId ? `/api/photos/user/${p.userId}?v=${p.v}` : `/api/photos/${p.id}?v=${p.v}`);
       photos = {
-        byId: new Map(list.map((p) => [p.id, p.v])),
-        byEmail: new Map(list.filter((p) => p.email).map((p) => [p.email.toLowerCase(), { id: p.id, v: p.v }])),
+        byId: new Map(list.filter((p) => p.id).map((p) => [p.id, url(p)])),
+        byEmail: new Map(list.filter((p) => p.email).map((p) => [p.email.toLowerCase(), url(p)])),
       };
       listeners.forEach((fn) => fn(photos));
     }).catch(() => { pending = null; });
@@ -40,9 +41,9 @@ const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2).m
 // Find the person by employee id or by email (Azure DevOps assignees and logins).
 export default function Avatar({ id, email, name, size = 22 }) {
   const p = usePhotos();
-  const hit = id != null ? (p?.byId.has(id) ? { id, v: p.byId.get(id) } : null) : email ? p?.byEmail.get(String(email).toLowerCase()) : null;
+  const src = id != null ? p?.byId.get(id) : email ? p?.byEmail.get(String(email).toLowerCase()) : null;
   const style = { width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.42)) };
-  if (hit) return <img className="pic" src={`/api/photos/${hit.id}?v=${hit.v}`} alt="" style={style} loading="lazy" />;
+  if (src) return <img className="pic" src={src} alt="" style={style} loading="lazy" />;
   return <span className="pic pic-initials" aria-hidden="true" style={{ ...style, background: colorFor(name) }}>{initials(name)}</span>;
 }
 

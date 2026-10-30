@@ -10,6 +10,7 @@ import SowTracker from '../pages/SowTracker.jsx';
 import Logo from './Logo.jsx';
 import RolesPage from '../pages/RolesPage.jsx';
 import ProfilePage from '../pages/ProfilePage.jsx';
+import Avatar from './Avatar.jsx';
 import { useEffect } from 'react';
 import Timesheet from '../pages/Timesheet.jsx';
 import AzureDevOpsPage from '../pages/AzureDevOpsPage.jsx';
@@ -86,7 +87,7 @@ export default function Shell({ user, onLogout, onUserChange }) {
         <div className="topbar-user">
           <a className={`avatar${section === 'profile' ? ' on' : ''}`} href="#/profile" title={`My profile: ${user.name} (${user.email}), ${roleLabel(user)}`}
             aria-current={section === 'profile' ? 'page' : undefined}>
-            {user.photo ? <img src={user.photo} alt="My profile" /> : <><span aria-hidden="true">{user.name[0].toUpperCase()}</span><span className="sr-only">My profile</span></>}
+            <Avatar email={user.email} name={user.name} size={28} /><span className="sr-only">My profile</span>
           </a>
           <button className="ghost" onClick={onLogout}>Log out</button>
         </div>

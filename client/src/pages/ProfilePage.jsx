@@ -60,7 +60,7 @@ export default function ProfilePage({ onUserChange }) {
     try {
       const photo = await squarePhoto(file);
       const d = await run('photo', () => api.profile.update({ photo }), 'Photo saved.');
-      if (d) { onUserChange?.({ photo: d.employee?.photo || null }); refreshPhotos(); }
+      if (d) { onUserChange?.({ photo: d.account.photo || null }); refreshPhotos(); }
     } catch (err) { setError(err.message); }
   };
   const removePhoto = async () => {
@@ -91,12 +91,22 @@ export default function ProfilePage({ onUserChange }) {
   return (
     <section className="profile">
       <div className="profile-head">
-        <div className="profile-photo">
-          {emp?.photo ? <img src={emp.photo} alt="" /> : <span aria-hidden="true">{initial}</span>}
-        </div>
+        <button type="button" className="profile-photo profile-photo-btn" disabled={busy !== ''} onClick={() => fileRef.current?.click()}
+          title={a.photo ? 'Change your photo' : 'Add a photo'}>
+          {a.photo ? <img src={a.photo} alt="Your photo" /> : <span aria-hidden="true">{initial}</span>}
+          <span className="profile-photo-cam" aria-hidden="true">📷</span>
+          <span className="sr-only">{a.photo ? 'Change your photo' : 'Add a photo'}</span>
+        </button>
         <div>
           <h1>{a.name}</h1>
           <p className="muted">{[emp?.designation, a.role, emp?.location].filter(Boolean).join(' · ')}</p>
+          <div className="row profile-photo-actions">
+            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={choosePhoto} />
+            <button className="secondary small" type="button" disabled={busy !== ''} onClick={() => fileRef.current?.click()}>
+              {busy === 'photo' ? 'Saving…' : a.photo ? 'Change photo' : 'Upload photo'}
+            </button>
+            {a.photo && <button className="link danger" type="button" disabled={busy !== ''} onClick={removePhoto}>Remove photo</button>}
+          </div>
         </div>
       </div>
       <ErrorNote>{error}</ErrorNote>
@@ -145,14 +155,6 @@ export default function ProfilePage({ onUserChange }) {
             <p className="muted">Your login isn't linked to an employee yet (they're matched by email). Ask an admin to add your email on the Employees page.</p>
           ) : (
             <>
-              <div className="profile-photo-row">
-                <div className="profile-photo small">{emp.photo ? <img src={emp.photo} alt="Your photo" /> : <span aria-hidden="true">{initial}</span>}</div>
-                <div className="row">
-                  <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={choosePhoto} />
-                  <button className="secondary" type="button" disabled={busy !== ''} onClick={() => fileRef.current?.click()}>{busy === 'photo' ? 'Saving…' : emp.photo ? 'Change photo' : 'Add photo'}</button>
-                  {emp.photo && <button className="link danger" type="button" disabled={busy !== ''} onClick={removePhoto}>Remove</button>}
-                </div>
-              </div>
               <form className="row" onSubmit={savePhone}>
                 <label className="grow">
                   <span>Phone</span>

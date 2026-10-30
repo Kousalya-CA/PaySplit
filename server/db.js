@@ -637,6 +637,8 @@ addUserColumn('last_login_at', 'TEXT');
 // Roles & access (see access.js): the built-in Employee role and custom roles, each with the tabs it
 // can open. users.role_id picks a custom role for a non-admin user (NULL = Employee).
 addUserColumn('role_id', 'INTEGER');
+// Profile photo for a login with no matching employee (otherwise the photo is on the employee).
+addUserColumn('photo', 'TEXT');
 db.exec(`
   CREATE TABLE IF NOT EXISTS roles (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

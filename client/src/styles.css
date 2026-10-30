@@ -754,3 +754,16 @@ a.avatar.on, a.avatar:hover { box-shadow: 0 0 0 2px var(--saffron); }
 .with-pic { display: inline-flex; align-items: center; gap: .45rem; min-width: 0; }
 .drill .pic { margin-right: .1rem; }
 img.pic { box-shadow: 0 0 0 1px var(--line); background: var(--surface); }
+
+/* Top bar avatar: the same photo-or-initials avatar, with a saffron ring on hover. */
+a.avatar { background: none; width: auto; height: auto; border-radius: 50%; display: inline-flex; }
+a.avatar .pic { box-shadow: 0 0 0 2px rgba(255, 255, 255, .7); }
+/* My profile: click the big photo (or Upload photo) to choose a new one. */
+.profile-photo-btn { position: relative; border: 0; padding: 0; cursor: pointer; overflow: visible; }
+.profile-photo-btn img, .profile-photo-btn > span:first-child { border-radius: 50%; overflow: hidden; }
+.profile-photo-btn img { width: 100%; height: 100%; object-fit: cover; }
+.profile-photo-cam { position: absolute; right: -2px; bottom: -2px; width: 1.7rem; height: 1.7rem; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface); box-shadow: 0 2px 6px rgba(15, 42, 54, .25); font-size: .85rem; }
+.profile-photo-btn:hover .profile-photo-cam, .profile-photo-btn:focus-visible .profile-photo-cam { background: var(--saffron); }
+.profile-photo-actions { margin-top: .5rem; gap: .8rem; align-items: center; }
+.secondary.small { border-color: var(--line); }

@@ -19,6 +19,11 @@ const q = {
   setPhoto: db.prepare('UPDATE employees SET photo = ? WHERE id = ?'),
   photos: db.prepare('SELECT id, LOWER(email) AS email, photo FROM employees WHERE photo IS NOT NULL'),
   photo: db.prepare('SELECT photo FROM employees WHERE id = ?'),
+  // Logins with their own photo (no employee with their email).
+  userPhotos: db.prepare(`SELECT u.id, LOWER(u.email) AS email, u.photo FROM users u
+    WHERE u.photo IS NOT NULL AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.email = u.email COLLATE NOCASE)`),
+  userPhoto: db.prepare('SELECT photo FROM users WHERE id = ?'),
+  setUserPhoto: db.prepare('UPDATE users SET photo = ? WHERE id = ?'),
   setDetails: db.prepare('UPDATE employees SET designation = ?, joined_on = ?, manager_id = ?, location = ? WHERE id = ?'),
 };
 
@@ -40,6 +45,8 @@ function profileOf(user, token) {
       lastLoginAt: u.last_login_at,
       devices: countSessions(u.id),
       hasPassword: Boolean(u.password_hash),
+      // The photo shown everywhere: the employee's, else the login's own.
+      photo: e?.photo || u.photo || null,
     },
     employee: e ? {
       id: e.id, code: e.employee_code, type: e.type, active: Boolean(e.active), phone: e.phone, photo: e.photo,
@@ -57,7 +64,8 @@ const text = (value, max, label) => {
 export function registerProfileRoutes(router) {
   router.get('/api/me/profile', ({ user, req }) => profileOf(user, getCookie(req, 'sid')));
 
-  // Name (the login), and phone and photo (the linked employee).
+  // Name (the login), phone (the linked employee) and photo (the employee's, or the login's own
+  // when there's no employee with this email).
   router.patch('/api/me/profile', ({ user, body, req }) => {
     const e = user.email ? q.employeeByEmail.get(user.email) : null;
     if (body?.name !== undefined) {
@@ -66,17 +74,17 @@ export function registerProfileRoutes(router) {
       if (name.length > 80) throw new HttpError(400, 'Keep your name to 80 characters or fewer.');
       q.rename.run(name, user.id);
     }
-    if (body?.phone !== undefined || body?.photo !== undefined) {
+    if (body?.photo !== undefined) {
+      const photo = body.photo ? String(body.photo) : null;
+      if (photo && (!PHOTO_RE.test(photo) || photo.length > MAX_PHOTO)) throw new HttpError(400, 'Choose a JPEG, PNG or WebP photo under 200 KB.');
+      if (e) { q.setPhoto.run(photo, e.id); q.setUserPhoto.run(null, user.id); } else q.setUserPhoto.run(photo, user.id);
+    }
+    if (body?.phone !== undefined) {
       if (!e) throw new HttpError(400, 'Your login isn\'t linked to an employee yet, so there are no employee details to change. Ask an admin.');
-      if (body.phone !== undefined) {
+      {
         const phone = text(body.phone, 20, 'phone number');
         if (phone && !PHONE_RE.test(phone)) throw new HttpError(400, 'Enter the phone number with digits only, for example +91 98765 43210.');
         q.setPhone.run(phone, e.id);
-      }
-      if (body.photo !== undefined) {
-        const photo = body.photo ? String(body.photo) : null;
-        if (photo && (!PHOTO_RE.test(photo) || photo.length > MAX_PHOTO)) throw new HttpError(400, 'Choose a JPEG, PNG or WebP photo under 200 KB.');
-        q.setPhoto.run(photo, e.id);
       }
     }
     return profileOf(user, getCookie(req, 'sid'));
@@ -100,14 +108,19 @@ export function registerProfileRoutes(router) {
 
   // Profile photos for the avatars next to names (anyone signed in). The list says who has one and
   // a version (changes when the photo does), so the images can be cached by the browser.
-  router.get('/api/photos', () => q.photos.all().map((p) => ({ id: p.id, email: p.email, v: createHash('sha1').update(p.photo).digest('hex').slice(0, 10) })));
-  router.get('/api/photos/:id', ({ params, setHeader }) => {
-    const photo = q.photo.get(params.id)?.photo;
+  const version = (photo) => createHash('sha1').update(photo).digest('hex').slice(0, 10);
+  router.get('/api/photos', () => [
+    ...q.photos.all().map((p) => ({ id: p.id, email: p.email, v: version(p.photo) })),
+    ...q.userPhotos.all().map((p) => ({ userId: p.id, email: p.email, v: version(p.photo) })),
+  ]);
+  const image = (photo, setHeader) => {
     const m = photo && /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(photo);
     if (!m) throw new HttpError(404, 'No photo.');
     setHeader('Cache-Control', 'private, max-age=604800');
     return { raw: Buffer.from(m[2], 'base64'), type: m[1] };
-  });
+  };
+  router.get('/api/photos/:id', ({ params, setHeader }) => image(q.photo.get(params.id)?.photo, setHeader));
+  router.get('/api/photos/user/:id', ({ params, setHeader }) => image(q.userPhoto.get(params.id)?.photo, setHeader));
 
   // Admins: an employee's designation, date of joining, reporting manager and location.
   router.patch('/api/employees/:id/details', ({ params, body }) => {

@@ -20,10 +20,12 @@ const WINDOW = 15 * 60 * 1000;
 
 // The signed-in user for the browser, with their role's name and the tabs they can open.
 const photoOf = db.prepare('SELECT photo FROM employees WHERE email = ? COLLATE NOCASE');
+const userPhotoOf = db.prepare('SELECT photo FROM users WHERE id = ?');
 export const publicUser = (u) => ({
   id: u.id, name: u.name, email: u.email, role: u.role, isOwner: Boolean(u.is_owner),
   roleName: roleName(u), tabs: tabsFor(u),
-  photo: (u.email && photoOf.get(u.email)?.photo) || null, // for the avatar in the top bar
+  // For the avatar in the top bar: the employee's photo, else the login's own.
+  photo: (u.email && photoOf.get(u.email)?.photo) || (u.id && userPhotoOf.get(u.id)?.photo) || null,
 });
 
 const checkPassword = (password) => {
